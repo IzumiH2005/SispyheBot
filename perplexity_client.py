@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from openai import OpenAI
 from typing import Dict, Any, List, Optional
 import re
@@ -92,37 +93,46 @@ class PerplexityClient:
 
             # Configuration de base suivant exactement le blueprint
             request_kwargs = {
-                "model": "sonar-pro",  # Utilisation cohérente du modèle
+                "model": "sonar-pro",
                 "messages": messages,
                 "temperature": 0.2,
-                "top_p": 0.9
+                "top_p": 0.9,
+                "stream": False  # Désactivé pour une réponse directe
             }
 
             logger.info(f"Paramètres de la requête: {request_kwargs}")
 
             try:
+                logger.info("Envoi de la requête à l'API Perplexity...")
                 response = self.client.chat.completions.create(**request_kwargs)
                 logger.info(f"Réponse reçue du modèle: {response.model}")
                 logger.info(f"ID de la réponse: {response.id}")
+
+                # Extraction du contenu et des citations
+                content = response.choices[0].message.content
+                citations = []
+
+                # Vérification de la présence des citations dans l'objet response
+                if hasattr(response, 'citations'):
+                    logger.info("Citations trouvées dans l'objet response")
+                    citations = response.citations
+                elif hasattr(response, 'choices') and hasattr(response.choices[0], 'message'):
+                    # Extraction des URLs des citations du texte si présentes
+                    logger.info("Extraction des URLs depuis le contenu de la réponse")
+                    urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', content)
+                    citations = [url for url in urls if url.startswith('http')]
+                    logger.info(f"Nombre d'URLs extraites: {len(citations)}")
+
+                logger.info("Génération de la réponse finale avec le contenu et les sources")
+                return {
+                    "response": content,
+                    "sources": citations
+                }
+
             except Exception as e:
                 logger.error(f"Erreur lors de l'appel API: {str(e)}")
                 logger.error(f"Paramètres utilisés: {request_kwargs}")
                 raise
-
-            if not response.choices:
-                logger.error("Pas de choix dans la réponse")
-                raise ValueError("Réponse invalide: pas de choix disponible")
-
-            content = response.choices[0].message.content
-            # Extraire les citations si disponibles
-            citations = []
-            if hasattr(response, 'citations'):
-                citations = response.citations
-
-            return {
-                "response": content,
-                "sources": citations
-            }
 
         except Exception as e:
             error_msg = str(e)
@@ -134,6 +144,8 @@ class PerplexityClient:
                 return {"error": "Erreur d'authentification avec l'API"}
             elif "invalid" in error_msg.lower():
                 return {"error": f"Requête invalide: {error_msg}"}
+            elif "timeout" in error_msg.lower():
+                return {"error": "La requête a pris trop de temps"}
 
             return {"error": f"Erreur du service: {error_msg}"}
 
@@ -188,26 +200,65 @@ Format de réponse souhaité :
             if not clean_query:
                 return {"error": "La requête ne peut pas être vide"}
 
-            # Détecter si un filtre temporel est nécessaire
-            time_filter = self._detect_time_filter(clean_query)
-            logger.info(f"Filtre temporel détecté: {time_filter}")
-
-            messages = self._prepare_search_query(clean_query, time_filter)
             logger.info(f"Recherche pour: {clean_query}")
 
-            result = await self._make_request(messages)
+            messages = [
+                {
+                    "role": "system",
+                    "content": "Tu es un assistant qui répond toujours en français avec précision et concision."
+                },
+                {
+                    "role": "user",
+                    "content": clean_query
+                }
+            ]
 
-            if "error" in result:
-                return result
+            request_kwargs = {
+                "model": "sonar-pro",
+                "messages": messages,
+                "temperature": 0.2,
+                "top_p": 0.9,
+                "stream": False
+            }
+
+            logger.info("Envoi de la requête à l'API Perplexity...")
+            response = await asyncio.to_thread(
+                self.client.chat.completions.create,
+                **request_kwargs
+            )
+
+            logger.info(f"Réponse reçue du modèle: {response.model}")
+            logger.info(f"ID de la réponse: {response.id}")
+
+            content = response.choices[0].message.content
+            citations = []
+
+            if hasattr(response, 'citations'):
+                logger.info("Citations trouvées dans l'objet response")
+                citations = response.citations
+            else:
+                logger.info("Extraction des URLs depuis le contenu")
+                urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', content)
+                citations = [url for url in urls if url.startswith('http')]
+                logger.info(f"URLs extraites: {len(citations)}")
 
             return {
-                "response": result["response"],
-                "sources": result["sources"]
+                "response": content,
+                "sources": citations
             }
 
         except Exception as e:
-            logger.error(f"Erreur dans la méthode search: {e}")
-            return {"error": "Une erreur inattendue est survenue"}
+            error_msg = str(e)
+            logger.error(f"Erreur dans la méthode search: {error_msg}")
+
+            if "quota" in error_msg.lower():
+                return {"error": "Limite de requêtes atteinte"}
+            elif "unauthorized" in error_msg.lower():
+                return {"error": "Erreur d'authentification avec l'API"}
+            elif "timeout" in error_msg.lower():
+                return {"error": "La requête a pris trop de temps"}
+
+            return {"error": f"Une erreur est survenue: {error_msg}"}
 
     async def _make_request_with_retries(self, messages: list, max_retries: int = 2) -> Dict[Any, Any]:
         """Fait une requête avec tentatives de réessai"""

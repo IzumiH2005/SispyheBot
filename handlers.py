@@ -133,6 +133,7 @@ Je suis Sisyphe, votre compagnon philosophique et érudit. Je peux vous aider de
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /search avec un meilleur feedback"""
+    progress_message = None
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
@@ -177,6 +178,9 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response_text = result.get("response", "")
             sources = result.get("sources", [])
 
+            logger.info(f"Nombre de sources trouvées: {len(sources)}")
+            logger.info(f"Longueur de la réponse: {len(response_text)}")
+
             if not response_text:
                 logger.error("Réponse vide reçue de l'API")
                 await progress_message.edit_text(
@@ -185,20 +189,56 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            # Utiliser Gemini pour structurer la réponse
-            context_message = (
-                f"Organise de façon sophistiquée et claire les informations suivantes en français :\n\n"
-                f"{response_text}\n\n"
-                f"Sources à citer :\n"
-                + "\n".join([f"- {source}" for source in sources])
-            )
+            # Structuration sophistiquée avec Gemini
+            context_message = f"""Tu es un assistant sophistiqué qui doit organiser et présenter ces informations en français de manière claire et structurée.
 
+Information brute à organiser :
+{response_text}
+
+Instructions de formatage :
+1. Crée un titre principal pertinent
+2. Organise le contenu en sections logiques avec des sous-titres
+3. Utilise des listes à puces pour les points importants
+4. Mets en valeur les informations clés avec *italique* ou **gras**
+5. Ajoute une section "Sources" à la fin
+6. Utilise le format Markdown pour la mise en forme
+
+Sources à citer dans la bibliographie :
+{chr(10).join([f"- {source}" for source in sources])}
+
+Le format final doit ressembler à :
+
+*Titre Principal*
+
+**Section 1**
+• Point important
+• Autre point
+
+**Section 2**
+[...]
+
+*Sources consultées :*
+[Liste numérotée des sources]"""
+
+            logger.info("Envoi à Gemini pour formatage")
             formatted_response = await sisyphe.get_response(context_message)
+            logger.info("Réponse reçue de Gemini")
+
+            # Vérification du formatage
+            if not formatted_response or not formatted_response.strip():
+                logger.warning("Réponse vide de Gemini, utilisation du format par défaut")
+                formatted_response = f"""*Résultat de la recherche*
+
+{response_text}
+
+*Sources consultées :*
+{chr(10).join([f"{i+1}. {source}" for i, source in enumerate(sources)])}"""
 
             logger.info("Réponse formatée et envoyée avec succès")
             await progress_message.edit_text(
                 formatted_response,
-                parse_mode='Markdown'
+                parse_mode='Markdown',
+                disable_web_page_preview=True
             )
 
         except asyncio.TimeoutError:
@@ -213,7 +253,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Détails de l'erreur:")
         error_message = "*semble perplexe* Je ne peux pas effectuer cette recherche pour le moment."
 
-        if 'progress_message' in locals():
+        if progress_message:
             await progress_message.edit_text(error_message, parse_mode='Markdown')
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
