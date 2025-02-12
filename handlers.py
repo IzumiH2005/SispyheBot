@@ -295,7 +295,7 @@ Instructions de formatage :
             await update.message.reply_text(error_message, parse_mode='Markdown')
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /image avec une meilleure gestion des images de couverture"""
+    """Gère la commande /image"""
     progress_message = None
     try:
         query = ' '.join(context.args) if context.args else None
@@ -316,12 +316,10 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Recherche d'images
         scraper = GoogleImageScraper()
-        logger.info(f"[DEBUG] Début de la recherche avec GoogleImageScraper pour query: {query}")
         image_urls = await scraper.search_images(query, max_results=10)
-        logger.info(f"[DEBUG] URLs trouvées ({len(image_urls)}): {image_urls}")
 
         if not image_urls:
-            logger.warning("[DEBUG] Aucune URL d'image trouvée, arrêt du processus")
+            logger.warning("Aucune URL d'image trouvée")
             await progress_message.edit_text(
                 "*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.",
                 parse_mode='Markdown'
@@ -331,87 +329,38 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Préparer l'album d'images
         media_group = []
         temp_files = []  # Pour garder une trace des fichiers à nettoyer
-        quality_images = []  # Liste pour trier les images par qualité
 
-        # Télécharger et vérifier la qualité de toutes les images
+        # Télécharger les images (limité aux 5 premières réussies)
         for url in image_urls:
+            if len(media_group) >= 5:  # Arrêter après 5 images
+                break
+
             try:
-                logger.info(f"[DEBUG] Tentative de téléchargement pour URL: {url}")
                 image_path = await media_handler.download_image(url)
-
                 if image_path and os.path.exists(image_path):
-                    # Vérifier la taille du fichier
-                    file_size = os.path.getsize(image_path)
-                    # Premier niveau de filtre : ignorer uniquement les images vraiment trop petites ou trop grandes
-                    if file_size < 20 * 1024:  # 20KB (seuil plus bas)
-                        logger.warning(f"[DEBUG] Image de trop faible qualité ({file_size/1024:.1f}KB): {image_path}")
-                        continue
-                    if file_size > 5 * 1024 * 1024:  # 5MB
-                        logger.warning(f"[DEBUG] Image trop volumineuse ({file_size/1024/1024:.1f}MB): {image_path}")
-                        continue
-
-                    # Ajouter l'image à la liste de qualité avec sa taille
-                    quality_images.append((file_size, image_path))
-                    logger.info(f"[DEBUG] Image qualifiée: {image_path} ({file_size/1024:.1f}KB)")
-                else:
-                    logger.warning(f"[DEBUG] Échec du téléchargement pour {url}")
+                    with open(image_path, 'rb') as photo_file:
+                        media_group.append(
+                            InputMediaPhoto(media=InputFile(photo_file))
+                        )
+                        temp_files.append(image_path)
+                    logger.info(f"Image ajoutée à l'album: {image_path}")
             except Exception as e:
-                logger.error(f"[DEBUG] Erreur lors du téléchargement de {url}: {str(e)}")
-                continue
-
-        # Trier les images par taille (qualité)
-        quality_images.sort(reverse=True)  # Tri par taille décroissante
-
-        # Si nous avons moins de 5 images mais au moins une, on les utilise toutes
-        best_images = quality_images[:5]  # Prendre jusqu'à 5 meilleures images
-
-        # Si nous n'avons pas assez d'images, réessayer avec un seuil plus bas
-        if len(best_images) < 3:
-            logger.info("[DEBUG] Pas assez d'images trouvées, abaissement du seuil de qualité")
-            quality_images = []  # Réinitialiser la liste
-            for url in image_urls:
-                try:
-                    image_path = await media_handler.download_image(url)
-                    if image_path and os.path.exists(image_path):
-                        file_size = os.path.getsize(image_path)
-                        # Seuil plus bas pour le second essai
-                        if file_size < 10 * 1024:  # 10KB
-                            continue
-                        quality_images.append((file_size, image_path))
-                except Exception as e:
-                    logger.error(f"[DEBUG] Erreur lors du second essai: {str(e)}")
-                    continue
-
-            quality_images.sort(reverse=True)
-            best_images = quality_images[:5]
-
-        # Créer le groupe média avec les meilleures images
-        for _, image_path in best_images:
-            try:
-                with open(image_path, 'rb') as photo_file:
-                    media_group.append(
-                        InputMediaPhoto(media=InputFile(photo_file))
-                    )
-                    temp_files.append(image_path)
-                logger.info(f"[DEBUG] Image de haute qualité ajoutée à l'album: {image_path}")
-            except Exception as e:
-                logger.error(f"[DEBUG] Erreur lors de la lecture du fichier {image_path}: {str(e)}")
+                logger.error(f"Erreur lors du téléchargement de {url}: {str(e)}")
                 continue
 
         if not media_group:
-            logger.warning("[DEBUG] Aucune image de qualité suffisante n'a pu être préparée")
+            logger.warning("Aucune image n'a pu être préparée pour l'envoi")
             await progress_message.edit_text(
-                "*semble déçu* Je n'ai pas trouvé d'images de qualité suffisante.",
+                "*semble déçu* Je n'ai pas pu préparer les images.",
                 parse_mode='Markdown'
             )
             return
 
-        # Envoyer l'album complet
+        # Envoyer l'album
         try:
-            logger.info(f"[DEBUG] Envoi de l'album avec {len(media_group)} images de haute qualité")
-            await update.message.reply_media_group(media=media_group)  # Déjà limité à 5 images
+            await update.message.reply_media_group(media=media_group)
             message_text = (
-                "*range ses documents* Voici les meilleures images que j'ai trouvées "
+                "*range ses documents* Voici les images que j'ai trouvées "
                 f"({len(media_group)} image{'s' if len(media_group) > 1 else ''})."
             )
             await progress_message.edit_text(
@@ -419,21 +368,11 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
         except Exception as e:
-            logger.error(f"[DEBUG] Erreur lors de l'envoi de l'album: {str(e)}")
+            logger.error(f"Erreur lors de l'envoi de l'album: {e}")
             await progress_message.edit_text(
                 "*semble troublé* Je n'ai pas pu envoyer les images.",
                 parse_mode='Markdown'
             )
-        finally:
-            # Nettoyage des fichiers
-            for temp_file in temp_files:
-                try:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-                        logger.info(f"[DEBUG] Fichier nettoyé: {temp_file}")
-                except Exception as e:
-                    logger.error(f"[DEBUG] Erreur lors du nettoyage de {temp_file}: {str(e)}")
-            media_handler.cleanup()
 
     except Exception as e:
         logger.error(f"Erreur générale dans image_command: {e}", exc_info=True)
@@ -443,8 +382,14 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
     finally:
-        # Nettoyage final
-        logger.info("Nettoyage final des ressources")
+        # Nettoyage des fichiers temporaires
+        for temp_file in temp_files:
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                    logger.info(f"Fichier nettoyé: {temp_file}")
+            except Exception as e:
+                logger.error(f"Erreur lors du nettoyage de {temp_file}: {str(e)}")
         media_handler.cleanup()
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
