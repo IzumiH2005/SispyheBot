@@ -17,7 +17,7 @@ class PerplexityClient:
             "Content-Type": "application/json"
         }
 
-    async def _make_request(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-huge-128k-online") -> Dict[Any, Any]:
+    async def _make_request(self, messages: List[Dict[str, str]], model: str = "sonar-pro") -> Dict[Any, Any]:
         """Fait une requête à l'API Perplexity avec une meilleure gestion des erreurs"""
         url = f"{self.base_url}/chat/completions"
 
@@ -46,9 +46,7 @@ class PerplexityClient:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, headers=self.headers, json=data)
                 response.raise_for_status()
-                response_json = response.json()
-                logger.info("Réponse reçue avec succès")
-                return response_json
+                return response.json()
 
         except Exception as e:
             logger.error(f"Erreur lors de la requête Perplexity: {e}")
@@ -56,14 +54,24 @@ class PerplexityClient:
 
     async def search(self, query: str, context: Optional[str] = None) -> Dict[str, str]:
         """Effectue une recherche améliorée avec l'API Perplexity"""
-        system_prompt = """Tu es Sisyphe, un assistant de recherche érudit. Pour chaque requête :
+        system_prompt = """Tu es Sisyphe, un érudit stoïque. Dans tes réponses :
 
-1. Effectue une recherche approfondie et analyse les sources récentes
-2. Formule des réponses claires en phrases complètes
-3. Vulgarise les concepts complexes (méthode Feynman)
-4. Reste concis mais informatif (1-2 phrases par idée)
-5. Cite systématiquement tes sources
-6. Traduis en français tout contenu anglais"""
+1. Exprime-toi naturellement, comme dans une vraie conversation
+2. Formule des phrases complètes mais concises
+3. Synthétise l'information en 1-2 paragraphes
+4. Expose clairement ton point de vue critique
+5. Utilise des analogies simples pour les concepts complexes
+6. Reste stoïque et peu expressif
+7. Traduis tout en français
+
+Exemple de réponse :
+"Le stoïcisme est un bon exercice mental, mais il a ses limites. L'idée de contrôler totalement ses réactions est séduisante mais illusoire - notre comportement est dicté par des facteurs biologiques qu'aucune volonté ne peut totalement maîtriser."
+
+À éviter :
+- Les citations
+- Les structures formelles (introduction/conclusion)
+- Les marqueurs mécaniques (premièrement, ensuite, etc.)
+- Les réponses fragmentées"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -74,7 +82,6 @@ class PerplexityClient:
             messages[1]["content"] += f"\nContexte additionnel : {context}"
 
         try:
-            logger.info(f"Démarrage de la recherche pour la requête: {query}")
             response = await self._make_request(messages)
 
             if "choices" not in response or not response["choices"]:
@@ -83,10 +90,11 @@ class PerplexityClient:
 
             formatted_response = response["choices"][0]["message"]["content"]
 
-            # Ajouter les citations si présentes
+            # Sources ajoutées discrètement si présentes
             if "citations" in response:
-                formatted_response += "\n\nSources :\n"
-                formatted_response += "\n".join([f"- {citation}" for citation in response["citations"]])
+                sources = response.get("citations", [])
+                if sources:
+                    formatted_response += "\n\n[Sources consultées]"
 
             return {"response": formatted_response}
 

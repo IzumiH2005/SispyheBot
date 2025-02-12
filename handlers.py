@@ -47,6 +47,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("*semble distrait*")
     except Exception as e:
         logger.error(f"Erreur inattendue dans start_command: {e}")
+        
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /help"""
@@ -386,12 +387,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.chat.send_action(action="typing")
 
         # Ajoute le contexte de l'utilisateur au message pour Gemini
-        context_message = f"[L'utilisateur s'appelle {nickname}. "
+        context_message = f"[L'utilisateur s'appelle {nickname}."
         if admin_manager.is_admin(user_id):
-            if user_id == 580187559:
-                context_message += "C'est Marceline, la personne avec qui tu aimes le plus discuter même si tu restes impassible. "
-            else:
-                context_message += "C'est ton créateur. "
+            context_message += "C'est une personne familière avec la philosophie."
         context_message += f"]\n\n{message_text}"
 
         response = await sisyphe.get_response(context_message)
