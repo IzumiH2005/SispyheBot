@@ -86,7 +86,7 @@ class MediaHandler:
                 'no_warnings': True,
                 'writethumbnail': False,
                 'writeinfojson': False,
-                'ffmpeg_location': 'ffmpeg',
+                'ffmpeg_location': shutil.which('ffmpeg'),  # Utiliser le chemin complet de ffmpeg
                 'max_filesize': max_size_mb * 1024 * 1024,  # Limite à 75MB
             }
 
@@ -102,7 +102,7 @@ class MediaHandler:
                 })
             else:  # mp4
                 ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4][filesize<75M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<75M]/best[ext=mp4]',
+                    'format': 'best[ext=mp4][filesize<75M]/best[filesize<75M]/best',
                     'merge_output_format': 'mp4',
                 })
 
@@ -135,21 +135,6 @@ class MediaHandler:
                     filename = filename.rsplit('.', 1)[0] + '.mp3'
                 elif not filename.endswith('.mp4'):
                     filename = filename.rsplit('.', 1)[0] + '.mp4'
-
-                # Vérifier le fichier final
-                if not os.path.exists(filename):
-                    raise Exception("Le fichier n'a pas été créé")
-
-                if os.path.getsize(filename) == 0:
-                    os.remove(filename)
-                    raise Exception("Le fichier téléchargé est vide")
-
-                # Vérifier la taille finale du fichier
-                final_size = os.path.getsize(filename)
-                if final_size > max_size_mb * 1024 * 1024:
-                    os.remove(filename)
-                    size_mb = final_size / (1024 * 1024)
-                    raise Exception(f"Le fichier final est trop volumineux ({size_mb:.1f}MB > {max_size_mb}MB)")
 
                 logger.info(f"Téléchargement réussi: {filename}")
                 return filename
