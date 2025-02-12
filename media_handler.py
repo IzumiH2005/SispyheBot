@@ -21,10 +21,19 @@ class MediaHandler:
         self.max_size = 5 * 1024 * 1024  # 5MB
         self.target_size = 1600  # px
 
+        # Domaines autorisés pour les images
+        self.allowed_domains = {'zerochan.net', 'pinterest.com', 'pinimg.com'}
+
     async def download_image(self, url: str) -> Optional[str]:
         """Télécharge et traite une image"""
         try:
             logger.info(f"[DEBUG] Téléchargement depuis: {url}")
+
+            # Vérifier le domaine
+            domain = url.split('/')[2].lower()
+            if not any(allowed in domain for allowed in self.allowed_domains):
+                logger.warning(f"[DEBUG] Domaine non autorisé: {domain}")
+                return None
 
             # Télécharger l'image
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
@@ -60,7 +69,14 @@ class MediaHandler:
                 temp_path = os.path.join(self.temp_dir, f"img_{int(time.time())}_{os.urandom(4).hex()}{ext}")
 
                 # Optimiser selon le format
-                save_opts = {'quality': 85, 'optimize': True} if format_name in ('JPEG', 'JPG') else {'optimize': True}
+                save_opts = {}
+                if format_name in ('JPEG', 'JPG'):
+                    save_opts = {'quality': 85, 'optimize': True}
+                elif format_name == 'PNG':
+                    save_opts = {'optimize': True}
+                else:
+                    save_opts = {}
+
                 img.save(temp_path, format=format_name, **save_opts)
 
                 # Vérifier la taille finale
@@ -105,6 +121,7 @@ class MediaHandler:
                         path = os.path.join(self.temp_dir, file)
                         if os.path.isfile(path):
                             os.remove(path)
+                            logger.info(f"[DEBUG] Supprimé: {path}")
                     except Exception as e:
                         logger.error(f"[DEBUG] Erreur nettoyage {path}: {str(e)}")
         except Exception as e:

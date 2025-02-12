@@ -3,7 +3,7 @@ import logging
 import asyncio
 from openai import OpenAI
 from typing import Dict, Any, Optional
-from scraper import StartpageImageScraper
+from scraper import GoogleImageScraper  # Changed import
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class FicheClient:
             api_key=self.api_key,
             base_url="https://api.perplexity.ai"
         )
-        self.image_scraper = StartpageImageScraper()
+        self.image_scraper = GoogleImageScraper()
 
     async def create_fiche(self, titre: str) -> Dict[str, Any]:
         """Crée une fiche détaillée pour un anime/série"""
@@ -31,7 +31,7 @@ class FicheClient:
 
             # Rechercher une image de couverture
             logger.info(f"Recherche d'une image pour: {titre}")
-            image_urls = await self.image_scraper.search_images(f"{titre} anime official cover")
+            image_urls = await self.image_scraper.search_images(f"{titre} anime official cover", max_results=1) #Added max_results
             image_url = image_urls[0] if image_urls else None
             logger.info(f"Image trouvée: {image_url}")
 

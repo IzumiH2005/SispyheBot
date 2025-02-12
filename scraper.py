@@ -1,150 +1,106 @@
 import logging
 import httpx
-import re
-from bs4 import BeautifulSoup
+import random
 from typing import List, Optional
-from urllib.parse import urljoin, urlparse, unquote
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 
-class StartpageImageScraper:
+class GoogleImageScraper:
     def __init__(self):
-        """Initialise le scraper avec des paramètres optimisés"""
-        self.base_url = "https://www.startpage.com"
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Cache-Control': 'max-age=0'
-        }
-        self.supported_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+        """Initialise le scraper avec l'API Google Custom Search"""
+        self.api_keys = [
+            "AIzaSyADh3SC8TxrhIXrARFNc_aubO1wxNmf-Cg",
+            "AIzaSyBweH1s3Gbyh3CjQhVpWkGmNRNu0MjZbJY"
+        ]
+        self.search_engine_id = "635349c064b134fbd"
+        self.base_url = "https://www.googleapis.com/customsearch/v1"
+        self.supported_domains = ['zerochan.net', 'pinterest.com', 'pinimg.com']
+        logger.info(f"[DEBUG] Initialisé avec {len(self.api_keys)} clés API")
+
+    def _get_random_api_key(self) -> str:
+        """Retourne une clé API au hasard pour la rotation"""
+        api_key = random.choice(self.api_keys)
+        logger.info(f"[DEBUG] Utilisation de la clé API: {api_key[:10]}...")
+        return api_key
 
     def _is_valid_image_url(self, url: str) -> bool:
-        """Vérifie si l'URL est valide et pointe vers une image supportée"""
+        """Vérifie si l'URL est valide et provient des domaines autorisés"""
         try:
             parsed = urlparse(url)
-            if not all([parsed.scheme, parsed.netloc]):
+            domain = parsed.netloc.lower()
+            logger.debug(f"[DEBUG] Vérification du domaine: {domain}")
+
+            # Vérifier le domaine
+            if not any(supported_domain in domain for supported_domain in self.supported_domains):
+                logger.debug(f"[DEBUG] Domaine non supporté: {domain}")
                 return False
 
-            # Vérifier l'extension
+            # Vérifier si c'est une URL d'image
             path_lower = parsed.path.lower()
-            if any(path_lower.endswith(ext) for ext in self.supported_extensions):
-                return True
+            image_extensions = ('.jpg', '.jpeg', '.png', '.gif', '.webp')
+            is_image = any(path_lower.endswith(ext) for ext in image_extensions)
 
-            # Vérifier les motifs d'URL d'images courants
-            image_patterns = ['/image/', '/images/', '/img/', '/photo/']
-            return any(pattern in url.lower() for pattern in image_patterns)
+            if is_image:
+                logger.debug(f"[DEBUG] URL d'image valide trouvée: {url}")
+            else:
+                logger.debug(f"[DEBUG] URL non valide (pas une image): {url}")
+
+            return is_image
 
         except Exception as e:
             logger.error(f"[DEBUG] Erreur validation URL {url}: {str(e)}")
             return False
 
-    def _clean_image_url(self, url: str) -> Optional[str]:
-        """Nettoie et normalise l'URL de l'image"""
-        try:
-            if not url or not isinstance(url, str):
-                return None
-
-            # Supprimer les espaces et caractères non désirés
-            url = url.strip()
-            url = re.sub(r'[\n\r\t]', '', url)
-
-            # Décoder l'URL
-            url = unquote(url)
-
-            # Vérifier et corriger le protocole
-            if not url.startswith(('http://', 'https://')):
-                if url.startswith('//'):
-                    url = 'https:' + url
-                elif not url.startswith('/'):
-                    url = 'https://' + url
-                else:
-                    return None
-
-            # Vérifier si c'est une URL d'image valide
-            if self._is_valid_image_url(url):
-                return url
-
-            return None
-
-        except Exception as e:
-            logger.error(f"[DEBUG] Erreur nettoyage URL {url}: {str(e)}")
-            return None
-
-    async def search_images(self, query: str, max_results: int = 3) -> List[str]:
-        """Recherche des images sur Startpage"""
+    async def search_images(self, query: str, max_results: int = 10) -> List[str]:
+        """Recherche des images via l'API Google Custom Search"""
         try:
             logger.info(f"[DEBUG] Recherche d'images pour: {query}")
 
             # Paramètres de recherche
             params = {
+                'key': self._get_random_api_key(),
+                'cx': self.search_engine_id,
                 'q': query,
-                't': 'images',
-                'cat': 'pics',
-                'language': 'english'
+                'searchType': 'image',
+                'num': min(max_results, 10),  # Maximum 10 résultats par requête
+                'safe': 'active'  # Filtre de contenu actif
             }
 
-            # Faire la requête avec gestion des redirections
-            async with httpx.AsyncClient(headers=self.headers, follow_redirects=True, timeout=30.0) as client:
-                # Première requête pour obtenir les cookies
-                logger.info("[DEBUG] Envoi de la requête initiale à Startpage")
-                response = await client.get(self.base_url)
+            logger.debug(f"[DEBUG] Paramètres de recherche: {params}")
+
+            # Faire la requête
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                logger.info(f"[DEBUG] Envoi de la requête à l'API Google Custom Search: {self.base_url}")
+                response = await client.get(self.base_url, params=params)
                 response.raise_for_status()
+                logger.debug(f"[DEBUG] Réponse reçue avec status code: {response.status_code}")
 
-                # Requête de recherche d'images
-                logger.info("[DEBUG] Envoi de la requête de recherche d'images")
-                response = await client.get(f"{self.base_url}/sp/search", params=params)
-                response.raise_for_status()
+                data = response.json()
+                logger.debug(f"[DEBUG] Réponse API: {data}")
 
-                logger.info(f"[DEBUG] Statut réponse: {response.status_code}")
-                logger.info(f"[DEBUG] URL finale: {response.url}")
+                if 'items' not in data:
+                    logger.warning("[DEBUG] Aucun résultat trouvé dans la réponse")
+                    if 'error' in data:
+                        logger.error(f"[DEBUG] Erreur API: {data['error']}")
+                    return []
 
-                # Parser le HTML
-                soup = BeautifulSoup(response.text, 'html.parser')
+                # Extraire et filtrer les URLs d'images
+                image_urls = []
+                for item in data['items']:
+                    link = item.get('link')
+                    if link and self._is_valid_image_url(link):
+                        image_urls.append(link)
+                        logger.info(f"[DEBUG] URL d'image valide ajoutée: {link}")
+                    else:
+                        logger.debug(f"[DEBUG] URL ignorée: {link}")
 
-                # Trouver toutes les images avec différents sélecteurs
-                image_urls = set()
-                selectors = [
-                    'img[src]',
-                    'img[data-src]',
-                    '.image-result img',
-                    '.image img',
-                    '.thumbnail img'
-                ]
+                    if len(image_urls) >= max_results:
+                        break
 
-                for selector in selectors:
-                    for img in soup.select(selector):
-                        for attr in ['src', 'data-src', 'data-original']:
-                            if img.get(attr):
-                                url = img[attr]
-                                clean_url = self._clean_image_url(url)
-                                if clean_url:
-                                    logger.info(f"[DEBUG] URL trouvée: {clean_url}")
-                                    image_urls.add(clean_url)
-                                    if len(image_urls) >= max_results:
-                                        break
-
-                # Chercher aussi dans les liens qui pourraient contenir des images
-                for link in soup.find_all('a', href=True):
-                    href = link['href']
-                    if self._is_valid_image_url(href):
-                        clean_url = self._clean_image_url(href)
-                        if clean_url:
-                            logger.info(f"[DEBUG] URL trouvée dans lien: {clean_url}")
-                            image_urls.add(clean_url)
-                            if len(image_urls) >= max_results:
-                                break
-
-                logger.info(f"[DEBUG] Nombre d'URLs trouvées: {len(image_urls)}")
-                return list(image_urls)[:max_results]
+                logger.info(f"[DEBUG] Nombre total d'URLs trouvées: {len(image_urls)}")
+                return image_urls[:max_results]
 
         except Exception as e:
-            logger.error(f"[DEBUG] Erreur recherche: {str(e)}")
+            logger.error(f"[DEBUG] Erreur lors de la recherche: {str(e)}", exc_info=True)
             return []

@@ -9,7 +9,7 @@ from admin import AdminManager
 from perplexity_client import PerplexityClient
 from media_handler import MediaHandler
 import re
-from scraper import StartpageImageScraper
+from scraper import GoogleImageScraper  # Changed import
 from fiche import FicheClient
 
 logger = logging.getLogger(__name__)
@@ -315,9 +315,9 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Recherche d'images
-        scraper = StartpageImageScraper()
-        logger.info(f"[DEBUG] Début de la recherche avec StartpageImageScraper pour query: {query}")
-        image_urls = await scraper.search_images(query, max_results=3)
+        scraper = GoogleImageScraper() # Using the new class
+        logger.info(f"[DEBUG] Début de la recherche avec GoogleImageScraper pour query: {query}")
+        image_urls = await scraper.search_images(query, max_results=10) # Increased results
         logger.info(f"[DEBUG] URLs trouvées ({len(image_urls)}): {image_urls}")
 
         if not image_urls:
