@@ -102,7 +102,7 @@ class MediaHandler:
                 })
             else:  # mp4
                 ydl_opts.update({
-                    'format': 'best[ext=mp4][filesize<75M]/best[filesize<75M]/best',
+                    'format': 'bestvideo[ext=mp4][filesize<75M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<75M]/best[filesize<75M]',
                     'merge_output_format': 'mp4',
                 })
 
@@ -121,7 +121,7 @@ class MediaHandler:
                 logger.info(f"Informations vidéo extraites: {info.get('title')}")
 
                 # Vérifier la taille estimée si disponible
-                filesize = info.get('filesize')
+                filesize = info.get('filesize') or info.get('filesize_approx')
                 if filesize and filesize > max_size_mb * 1024 * 1024:
                     size_mb = filesize / (1024 * 1024)
                     raise Exception(f"Fichier trop volumineux ({size_mb:.1f}MB > {max_size_mb}MB)")
@@ -137,6 +137,16 @@ class MediaHandler:
                     filename = filename.rsplit('.', 1)[0] + '.mp4'
 
                 logger.info(f"Téléchargement réussi: {filename}")
+
+                # Vérifier si le fichier existe et sa taille
+                if not os.path.exists(filename):
+                    raise Exception("Le fichier n'a pas été créé")
+
+                actual_size = os.path.getsize(filename)
+                if actual_size > max_size_mb * 1024 * 1024:
+                    os.remove(filename)
+                    raise Exception(f"Fichier final trop volumineux: {actual_size / (1024 * 1024):.1f}MB")
+
                 return filename
 
         except Exception as e:
@@ -145,17 +155,37 @@ class MediaHandler:
             return None
 
     async def download_images(self, urls: List[str]) -> List[str]:
-        """Télécharge plusieurs images en parallèle avec une limite de concurrence"""
-        # Limiter le nombre de téléchargements simultanés à 5
-        semaphore = asyncio.Semaphore(5)
+        """Télécharge plusieurs images en parallèle avec une limite de concurrence et meilleure gestion des erreurs"""
+        # Limiter le nombre de téléchargements simultanés à 3 pour éviter la surcharge
+        semaphore = asyncio.Semaphore(3)
 
         async def download_with_semaphore(url):
-            async with semaphore:
-                return await self.download_image(url)
+            try:
+                async with semaphore:
+                    return await self.download_image(url)
+            except Exception as e:
+                logger.error(f"Erreur lors du téléchargement de {url}: {e}")
+                return None
 
-        tasks = [download_with_semaphore(url) for url in urls]
-        results = await asyncio.gather(*tasks)
-        return [path for path in results if path is not None]
+        # Filtrer les URLs invalides
+        valid_urls = [url for url in urls if url and isinstance(url, str) and url.startswith(('http://', 'https://'))]
+
+        if not valid_urls:
+            logger.warning("Aucune URL valide fournie pour le téléchargement")
+            return []
+
+        tasks = [download_with_semaphore(url) for url in valid_urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filtrer les résultats pour ne garder que les chemins valides
+        successful_downloads = [path for path in results if path and isinstance(path, str) and os.path.exists(path)]
+
+        if not successful_downloads:
+            logger.warning("Aucune image n'a pu être téléchargée avec succès")
+        else:
+            logger.info(f"Téléchargement réussi de {len(successful_downloads)} images sur {len(urls)} tentatives")
+
+        return successful_downloads
 
     async def search_youtube(self, query: str) -> List[Dict[str, str]]:
         """Recherche des vidéos YouTube avec gestion améliorée du rate limiting"""

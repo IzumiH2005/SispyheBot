@@ -8,6 +8,7 @@ from admin import AdminManager
 from perplexity_client import PerplexityClient
 from media_handler import MediaHandler
 import re
+from scraper import StartpageImageScraper
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("*semble perplexe* Je ne peux pas effectuer cette recherche pour le moment.")
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /image"""
+    """Gère la commande /image avec le scraper Startpage amélioré"""
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
@@ -168,33 +169,47 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Indiquer que le bot est en train d'écrire
         await update.message.chat.send_action(action="typing")
 
-        # Rechercher sur Pinterest et Zerochan
-        pinterest_urls = await perplexity_client.search_images(query, "Pinterest")
-        zerochan_urls = await perplexity_client.search_images(query, "Zerochan")
+        logger.info(f"Recherche d'images pour la requête: {query}")
 
-        # Télécharger les images
-        all_urls = pinterest_urls + zerochan_urls
-        if not all_urls:
+        # Utiliser le scraper Startpage
+        scraper = StartpageImageScraper()
+        image_urls = await scraper.search_images(query)
+
+        if not image_urls:
+            logger.warning(f"Aucune image trouvée pour la requête: {query}")
             await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.")
             return
 
-        image_paths = await media_handler.download_images(all_urls)
+        logger.info(f"Nombre d'URLs d'images trouvées: {len(image_urls)}")
+
+        # Télécharger les images
+        image_paths = await media_handler.download_images(image_urls)
 
         if not image_paths:
+            logger.error("Échec du téléchargement des images")
             await update.message.reply_text("*semble confus* Je n'ai pas pu télécharger les images.")
             return
 
         # Envoyer les images
         await update.message.reply_text("*parcourt sa collection* Voici ce que j'ai trouvé :")
+
         for path in image_paths:
-            with open(path, 'rb') as f:
-                await update.message.reply_photo(photo=f)
+            try:
+                logger.info(f"Tentative d'envoi de l'image: {path}")
+                with open(path, 'rb') as f:
+                    await update.message.reply_photo(photo=f)
+                logger.info(f"Image envoyée avec succès: {path}")
+            except Exception as e:
+                logger.error(f"Erreur lors de l'envoi de l'image {path}: {e}")
+                continue
 
         # Nettoyer les fichiers
         media_handler.cleanup()
+        logger.info("Nettoyage des fichiers temporaires effectué")
 
     except Exception as e:
         logger.error(f"Erreur dans image_command: {e}")
+        logger.exception("Détails de l'erreur:")
         await update.message.reply_text("*semble troublé* Je ne peux pas traiter ces images pour le moment.")
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
