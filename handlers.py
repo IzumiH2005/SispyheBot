@@ -142,6 +142,9 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("*lève un sourcil* Que souhaites-tu rechercher ?")
                 return
 
+        user_id = update.effective_user.id
+        logger.info(f"Recherche demandée par l'utilisateur {user_id}: {query}")
+
         # Message de recherche en cours
         progress_message = await update.message.reply_text(
             "*consulte ses sources*\n_Recherche en cours..._",
@@ -158,8 +161,11 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeout=25.0  # Augmenté à 25 secondes pour les recherches complexes
             )
 
+            logger.info(f"Résultat de la recherche pour '{query}': {result}")
+
             if "error" in result:
                 error_msg = result["error"]
+                logger.error(f"Erreur retournée par l'API: {error_msg}")
                 # Messages d'erreur plus spécifiques selon le type d'erreur
                 if "quota" in error_msg.lower():
                     response = "*ferme son livre* J'ai besoin d'une pause, mes ressources sont épuisées."
@@ -173,13 +179,23 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await progress_message.edit_text(response, parse_mode='Markdown')
                 return
 
-            response = result["response"]
+            response = result.get("response")
+            if not response:
+                logger.error("Réponse vide reçue de l'API")
+                await progress_message.edit_text(
+                    "*fronce les sourcils* Je n'ai pas trouvé d'information pertinente.",
+                    parse_mode='Markdown'
+                )
+                return
+
+            logger.info("Réponse formatée et envoyée avec succès")
             await progress_message.edit_text(
                 f"*termine sa recherche*\n\n{response}",
                 parse_mode='Markdown'
             )
 
         except asyncio.TimeoutError:
+            logger.error("Timeout lors de la recherche")
             await progress_message.edit_text(
                 "*fronce les sourcils* La recherche prend trop de temps. Essaie une requête plus simple.",
                 parse_mode='Markdown'

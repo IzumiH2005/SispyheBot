@@ -1,8 +1,9 @@
-import httpx
-import logging
 import os
+import logging
+from openai import OpenAI
+from typing import Dict, Any, List, Optional
+import httpx
 import re
-from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -13,108 +14,124 @@ class PerplexityClient:
         if not self.api_key:
             raise ValueError("PERPLEXITY_API_KEY non trouvée dans les variables d'environnement")
 
-        self.base_url = "https://api.perplexity.ai"
-        self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        logger.info("Initialisation du client Perplexity")
+        self.client = OpenAI(
+            api_key=self.api_key,
+            base_url="https://api.perplexity.ai"
+        )
 
-    async def _make_request(self, messages: list, model: str = "sonar-medium-online") -> Dict[Any, Any]:
+    async def _make_request(self, messages: list) -> Dict[Any, Any]:
         """Fait une requête optimisée à l'API Perplexity"""
-        url = f"{self.base_url}/chat/completions"
-
-        data = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 1024,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "stream": False,
-            "presence_penalty": 0.0,
-            "frequency_penalty": 0.0
-        }
-
         try:
-            logger.info(f"Envoi de la requête à Perplexity avec le modèle {model}")
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(url, headers=self.headers, json=data)
+            logger.info(f"Envoi de la requête à Perplexity avec les messages : {messages}")
 
-                if response.status_code == 400:
-                    error_text = response.text
-                    logger.error(f"Erreur 400 de l'API Perplexity: {error_text}")
-                    return {"error": "La recherche n'a pas pu aboutir, essayez de reformuler votre question"}
+            response = self.client.chat.completions.create(
+                model="sonar-pro",
+                messages=messages,
+                temperature=0.1,  # Réduit pour des réponses plus précises
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                top_p=0.9
+            )
 
-                if response.status_code != 200:
-                    logger.error(f"Erreur {response.status_code} de l'API: {response.text}")
-                    return {"error": "Un problème est survenu avec le service de recherche"}
+            # Log detailed response information
+            logger.debug(f"Réponse brute de l'API: {response}")
+            logger.info(f"Modèle utilisé: {response.model}")
+            logger.info(f"Nombre de choix: {len(response.choices)}")
 
-                response.raise_for_status()
-                return response.json()
+            # Vérifier si la réponse est valide
+            if not response or not response.choices:
+                logger.error("Réponse invalide: pas de choices dans la réponse")
+                raise ValueError("Réponse invalide de l'API")
 
-        except httpx.TimeoutException:
-            logger.error("Timeout de la requête Perplexity")
-            return {"error": "La recherche a pris trop de temps, veuillez réessayer"}
+            logger.info("Réponse valide reçue de l'API")
+            return {
+                "content": response.choices[0].message.content.strip()
+            }
+
         except Exception as e:
-            logger.error(f"Erreur lors de la requête Perplexity: {e}")
-            if "quota" in str(e).lower():
-                return {"error": "Limite de requêtes atteinte, veuillez réessayer plus tard"}
-            return {"error": "Une erreur est survenue lors de la recherche"}
+            logger.error(f"Erreur détaillée lors de la requête Perplexity: {str(e)}")
+            error_type = type(e).__name__
+            error_msg = str(e).lower()
+
+            if "quota" in error_msg:
+                logger.error("Erreur de quota détectée")
+                return {"error": "Limite de requêtes atteinte"}
+            elif "unauthorized" in error_msg or "authentication" in error_msg:
+                logger.error("Erreur d'authentification détectée")
+                return {"error": "Erreur d'authentification avec l'API"}
+            elif "invalid" in error_msg:
+                logger.error(f"Requête invalide détectée: {str(e)}")
+                return {"error": "Requête invalide"}
+
+            logger.error(f"Erreur non catégorisée ({error_type}): {str(e)}")
+            return {"error": "Erreur du service de recherche"}
+
+    def _prepare_search_query(self, query: str) -> List[Dict[str, str]]:
+        """Prépare la requête de recherche avec un prompt système approprié"""
+        system_prompt = """Tu es un assistant de recherche expert qui doit :
+1. Effectuer une recherche approfondie basée sur les mots-clés ou la phrase fournie
+2. Analyser intelligemment l'intention de la recherche, qu'elle soit générale ou spécifique
+3. Fournir des informations précises et vérifiées en français
+4. Ne jamais demander de reformulation, mais plutôt extraire l'essentiel de la requête
+5. Adapter la réponse au type de recherche :
+   - Pour une personne : biographie et impact
+   - Pour un concept : définition et contexte
+   - Pour un sujet d'actualité : derniers développements
+   - Pour une recherche générale : vue d'ensemble
+6. Citer les sources pertinentes"""
+
+        # Simplifier la requête pour l'API
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}  # Envoi direct de la requête sans préfixe
+        ]
+
+        logger.info(f"Messages préparés pour la recherche: {messages}")
+        return messages
 
     async def search(self, query: str) -> Dict[str, str]:
         """Effectue une recherche avec l'API Perplexity"""
         try:
-            # Nettoyer et formater la requête
+            # Nettoyer la requête
             clean_query = query.strip()
             if not clean_query:
+                logger.warning("Requête vide reçue")
                 return {"error": "La requête ne peut pas être vide"}
 
-            system_prompt = """Tu es un assistant de recherche expert qui :
-1. Répond de manière factuelle et directe
-2. Se concentre sur les informations vérifiées et pertinentes
-3. Structure la réponse de manière claire et concise
-4. Cite ses sources quand c'est possible
-5. Traduit toujours la réponse en français
-
-Pour une recherche sur une personne :
-- Commence par les informations essentielles (dates, nationalité, domaine)
-- Mentionne les réalisations principales
-- Ajoute un fait intéressant ou une citation notable
-
-Format de réponse :
-1. Présentation en 2-3 phrases
-2. Points clés si nécessaire (max 3)
-3. Sources en fin de réponse
-
-Reste factuel et précis."""
-
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Recherche détaillée sur : {clean_query}"}
-            ]
-
+            # Préparer et envoyer la requête
+            messages = self._prepare_search_query(clean_query)
             logger.info(f"Démarrage de la recherche pour: {clean_query}")
+
             response = await self._make_request(messages)
+            logger.debug(f"Réponse reçue: {response}")
 
             if "error" in response:
                 logger.warning(f"Erreur retournée: {response['error']}")
                 return response
 
-            if "choices" not in response or not response["choices"]:
-                logger.error("Réponse invalide de l'API Perplexity")
-                return {"error": "Format de réponse invalide"}
-
-            formatted_response = response["choices"][0]["message"]["content"].strip()
-
-            # Vérifier que la réponse n'est pas vide
-            if not formatted_response:
+            content = response.get("content")
+            if not content:
+                logger.error("Contenu de la réponse vide")
                 return {"error": "Aucune information trouvée"}
 
             logger.info("Recherche terminée avec succès")
-            return {"response": formatted_response}
+            return {"response": content}
 
         except Exception as e:
-            logger.error(f"Erreur lors de la recherche: {e}")
+            logger.error(f"Erreur inattendue lors de la recherche: {str(e)}")
             return {"error": "Une erreur inattendue est survenue"}
+
+    async def _make_request_with_retries(self, messages: list, max_retries: int = 2) -> Dict[Any, Any]:
+        """Fait une requête avec tentatives de réessai"""
+        for attempt in range(max_retries + 1):
+            try:
+                return await self._make_request(messages)
+            except Exception as e:
+                if attempt == max_retries:
+                    raise
+                logger.warning(f"Tentative {attempt + 1} échouée: {str(e)}")
+                continue
 
     async def search_images(self, query: str, site: str) -> List[str]:
         """Recherche améliorée d'images sur différentes plateformes"""
@@ -128,7 +145,7 @@ Reste factuel et précis."""
            - Les URLs directes des images (commençant par http/https)
            - Les URLs des pages contenant ces images
         4. Pour chaque image, décrire brièvement son contenu
-
+        
         Format de réponse :
         [URL_IMAGE]|[URL_PAGE]|[DESCRIPTION]
         (une ligne par image)
@@ -141,7 +158,7 @@ Reste factuel et précis."""
 
         try:
             response = await self._make_request(messages)
-            content = response["choices"][0]["message"]["content"]
+            content = response.get("content", "")
 
             # Extraire les URLs avec regex amélioré
             urls = []
@@ -234,13 +251,13 @@ Reste factuel et précis."""
 
         try:
             response = await self._make_request(messages)
-            content = response["choices"][0]["message"]["content"]
+            content = response.get("content", "")
 
             videos = []
             for line in content.split('\n'):
                 if '|' in line:
                     parts = line.split('|')
-                    if len(parts) >= 2:
+                    if len(parts) >= 4: # Ensure enough parts for title, url, duration, description.
                         title = parts[0].strip()
                         url = parts[1].strip()
 
@@ -261,5 +278,5 @@ Reste factuel et précis."""
             return videos[:5]  # Retourner les 5 meilleures vidéos
 
         except Exception as e:
-            logger.error(f"Erreur lors de la recherche YouTube: {e}")
+            logger.error(f"Erreur lors de la recherche YouTube: {str(e)}")
             return []
