@@ -10,6 +10,7 @@ from perplexity_client import PerplexityClient
 from media_handler import MediaHandler
 import re
 from scraper import StartpageImageScraper
+from fiche import FicheClient
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ sisyphe = SisyphePersona()
 admin_manager = AdminManager()
 perplexity_client = PerplexityClient()
 media_handler = MediaHandler()
+fiche_client = FicheClient()
 
 # Liste des commandes et leurs descriptions pour le menu
 COMMANDS = {
@@ -25,6 +27,7 @@ COMMANDS = {
     'search': 'Rechercher des informations (ex: /search philosophie grecque)',
     'image': 'Rechercher des images (ex: /image paysage montagne)',
     'yt': 'Rechercher et télécharger une vidéo YouTube',
+    'fiche': 'Créer une fiche détaillée d\'anime/série (ex: /fiche Naruto)',
     'menu': 'Afficher ce menu d\'aide'
 }
 
@@ -140,7 +143,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if update.message.reply_to_message and update.message.reply_to_message.text:
                 query = update.message.reply_to_message.text
             else:
-                await update.message.reply_text("*lève un sourcil* Que souhaites-tu rechercher ?")
+                await update.message.reply_text("*lève un sourcil* Que souhaites-tu rechercher ?", parse_mode='Markdown')
                 return
 
         user_id = update.effective_user.id
@@ -177,6 +180,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             response_text = result.get("response", "")
             sources = result.get("sources", [])
+            is_media = result.get("is_media", False)
 
             logger.info(f"Nombre de sources trouvées: {len(sources)}")
             logger.info(f"Longueur de la réponse: {len(response_text)}")
@@ -189,18 +193,16 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            # Détecter si la recherche concerne un anime/film/série
-            media_keywords = ['anime', 'série', 'film', 'movie', 'tv show', 'season', 'épisode', 'saison']
-            is_media_search = any(keyword in query.lower() for keyword in media_keywords)
+            formatted_response = ""
 
-            # Message à envoyer à Gemini pour le formatage
-            if is_media_search:
+            if is_media:
+                # Pour les médias, utiliser Gemini pour formater la réponse
                 context_message = f"""Tu es un assistant sophistiqué qui doit créer une fiche détaillée pour ce contenu média.
 
-Information brute à organiser :
+Information brute à organiser dans le format exact suivant :
 {response_text}
 
-Format exact à utiliser :
+Format exact à utiliser (conserve tous les caractères spéciaux) :
 
 ┌───────────────────────────────────────────────┐
 │               ✦ [TITRE] ✦                    │
@@ -244,38 +246,29 @@ Instructions de formatage :
 1. Utilise exactement ce format avec les mêmes caractères spéciaux et emojis
 2. Remplace les crochets par les informations appropriées
 3. Conserve la mise en forme Markdown (**, *, etc.)
-4. Laisse les sections vides si l'information n'est pas disponible
-5. Ajoute les sources à la fin dans la section LIENS & RÉFÉRENCES"""
+4. Laisse les sections vides si l'information n'est pas disponible"""
+
+                logger.info("Envoi à Gemini pour formatage")
+                formatted_response = await sisyphe.get_response(context_message)
+                logger.info("Réponse reçue de Gemini")
+
             else:
-                context_message = f"""Tu es un assistant sophistiqué qui doit synthétiser et organiser ces informations en français de manière claire et engageante.
-
-Information brute à organiser :
-{response_text}
-
-Instructions de formatage :
-1. Crée une introduction qui capte l'attention
-2. Organise le contenu en paragraphes cohérents
-3. Utilise des transitions naturelles entre les idées
-4. Mets en valeur les informations clés en *italique* ou **gras**
-5. Ajoute des sous-titres si nécessaire
-6. Termine par une conclusion qui résume les points importants
-7. Ajoute les sources en bas comme une bibliographie
-
-Sources à citer :
-{chr(10).join([f"- {source}" for source in sources])}"""
-
-            logger.info("Envoi à Gemini pour formatage")
-            formatted_response = await sisyphe.get_response(context_message)
-            logger.info("Réponse reçue de Gemini")
+                # Pour les autres recherches, utiliser directement la réponse de Perplexity
+                formatted_response = f"{response_text}\n\n"
+                formatted_response += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                formatted_response += "✦ **LIENS & RÉFÉRENCES** ✦\n"
+                for source in sources:
+                    formatted_response += f"🔗 {source}\n"
 
             if not formatted_response or not formatted_response.strip():
-                logger.warning("Réponse vide de Gemini, utilisation du format par défaut")
+                logger.warning("Réponse vide après formatage, utilisation du format par défaut")
                 formatted_response = f"""*Résultat de la recherche*
 
 {response_text}
 
-*Sources consultées :*
-{chr(10).join([f"- {source}" for source in sources])}"""
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✦ **LIENS & RÉFÉRENCES** ✦
+{chr(10).join([f"🔗 {source}" for source in sources])}"""
 
             # Envoi de la réponse formatée
             await progress_message.edit_text(
@@ -306,7 +299,7 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
-            await update.message.reply_text("*lève un sourcil* Quelle image cherches-tu ?")
+            await update.message.reply_text("*lève un sourcil* Quelle image cherches-tu ?", parse_mode='Markdown')
             return
 
         # Indiquer que le bot est en train d'écrire
@@ -320,7 +313,7 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not image_urls:
             logger.warning(f"Aucune image trouvée pour la requête: {query}")
-            await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.")
+            await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.", parse_mode='Markdown')
             return
 
         logger.info(f"Nombre d'URLs d'images trouvées: {len(image_urls)}")
@@ -330,11 +323,11 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         if not image_paths:
             logger.error("Échec du téléchargement des images")
-            await update.message.reply_text("*semble confus* Je n'ai pas pu télécharger les images.")
+            await update.message.reply_text("*semble confus* Je n'ai pas pu télécharger les images.", parse_mode='Markdown')
             return
 
         # Envoyer les images
-        await update.message.reply_text("*parcourt sa collection* Voici ce que j'ai trouvé :")
+        await update.message.reply_text("*parcourt sa collection* Voici ce que j'ai trouvé :", parse_mode='Markdown')
 
         for path in image_paths:
             try:
@@ -353,14 +346,14 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Erreur dans image_command: {e}")
         logger.exception("Détails de l'erreur:")
-        await update.message.reply_text("*semble troublé* Je ne peux pas traiter ces images pour le moment.")
+        await update.message.reply_text("*semble troublé* Je ne peux pas traiter ces images pour le moment.", parse_mode='Markdown')
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /yt"""
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
-            await update.message.reply_text("*lève un sourcil* Quelle vidéo cherches-tu ?")
+            await update.message.reply_text("*lève un sourcil* Quelle vidéo cherches-tu ?", parse_mode='Markdown')
             return
 
         # Indiquer que le bot est en train d'écrire
@@ -369,7 +362,7 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Rechercher les vidéos avec yt-dlp
         videos = await media_handler.search_youtube(query)
         if not videos:
-            await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé de vidéos correspondant à ta recherche.")
+            await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé de vidéos correspondant à ta recherche.", parse_mode='Markdown')
             return
 
         # Créer les boutons pour chaque vidéo avec des titres plus clairs
@@ -406,7 +399,7 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Erreur dans yt_command: {e}")
         logger.exception("Détails de l'erreur:")
-        await update.message.reply_text("*semble troublé* Je ne peux pas rechercher de vidéos pour le moment.")
+        await update.message.reply_text("*semble troublé* Je ne peux pas rechercher de vidéos pour le moment.", parse_mode='Markdown')
 
 async def handle_callback(update: Update, context: CallbackContext):
     """Gère les callbacks des boutons inline avec une meilleure gestion des fichiers"""
@@ -605,8 +598,90 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except TelegramError as e:
         logger.error(f"Erreur Telegram dans handle_message: {e}")
-        await update.message.reply_text("*semble distrait*")
+        await update.message.reply_text("*semble distrait*", parse_mode='Markdown')
     except Exception as e:
         logger.error(f"Erreur inattendue dans handle_message: {e}")
         logger.exception("Détails de l'erreur:")
-        await update.message.reply_text("*fronce les sourcils* Une pensée m'échappe...")
+        await update.message.reply_text("*fronce les sourcils* Une pensée m'échappe...", parse_mode='Markdown')
+
+async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gère la commande /fiche pour créer des fiches détaillées d'animes/séries"""
+    progress_message = None
+    try:
+        # Récupérer le titre
+        titre = ' '.join(context.args) if context.args else None
+        if not titre:
+            if update.message.reply_to_message and update.message.reply_to_message.text:
+                titre = update.message.reply_to_message.text
+            else:
+                await update.message.reply_text(
+                    "*lève un sourcil* Quel anime/série souhaites-tu découvrir ?",
+                    parse_mode='Markdown'
+                )
+                return
+
+        user_id = update.effective_user.id
+        logger.info(f"Fiche demandée par l'utilisateur {user_id}: {titre}")
+
+        # Message de recherche en cours
+        progress_message = await update.message.reply_text(
+            "*consulte son catalogue*\n_Création de la fiche en cours..._",
+            parse_mode='Markdown'
+        )
+
+        # Indiquer que le bot est en train d'écrire
+        await update.message.chat.send_action(action="typing")
+
+        try:
+            # Limite de temps pour la création de la fiche
+            result = await asyncio.wait_for(
+                fiche_client.create_fiche(titre),
+                timeout=25.0
+            )
+
+            if isinstance(result, dict) and "error" in result:
+                error_msg = result["error"]
+                logger.error(f"Erreur retournée par l'API: {error_msg}")
+                if "quota" in error_msg.lower():
+                    response = "*ferme son livre* J'ai besoin d'une pause, mes ressources sont épuisées."
+                elif "timeout" in error_msg.lower():
+                    response = "*fronce les sourcils* La recherche prend trop de temps. Essaie une autre requête."
+                else:
+                    response = f"*semble contrarié* {error_msg}"
+
+                await progress_message.edit_text(response, parse_mode='Markdown')
+                return
+
+            fiche = result.get("fiche", "")
+
+            if not fiche or not fiche.strip():
+                logger.error("Fiche vide reçue de l'API")
+                await progress_message.edit_text(
+                    "*fronce les sourcils* Je n'ai pas trouvé d'information sur ce titre.",
+                    parse_mode='Markdown'
+                )
+                return
+
+            # Envoi de la fiche
+            await progress_message.edit_text(
+                fiche,
+                parse_mode='Markdown',
+                disable_web_page_preview=True
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout lors de la création de la fiche")
+            await progress_message.edit_text(
+                "*fronce les sourcils* La création de la fiche prend trop de temps. Essaie une autre requête.",
+                parse_mode='Markdown'
+            )
+
+    except Exception as e:
+        logger.error(f"Erreur dans fiche_command: {e}")
+        logger.exception("Détails de l'erreur:")
+        error_message = "*semble perplexe* Je ne peux pas créer cette fiche pour le moment."
+
+        if progress_message:
+            await progress_message.edit_text(error_message, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(error_message, parse_mode='Markdown')

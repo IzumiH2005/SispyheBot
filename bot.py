@@ -18,6 +18,7 @@ from handlers import (
     search_command,
     image_command,
     yt_command,
+    fiche_command,  # Ajout de la nouvelle commande
     handle_message,
     handle_callback
 )
@@ -46,6 +47,7 @@ async def main():
         application.add_handler(CommandHandler('search', search_command))
         application.add_handler(CommandHandler('image', image_command))
         application.add_handler(CommandHandler('yt', yt_command))
+        application.add_handler(CommandHandler('fiche', fiche_command))  # Ajout du handler pour /fiche
         application.add_handler(CallbackQueryHandler(handle_callback))
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND,
