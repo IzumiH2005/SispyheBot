@@ -98,6 +98,7 @@ Je suis Sisyphe, votre compagnon philosophique et érudit. Je peux vous aider de
             menu_text += f"• /{cmd} - {desc}\n"
 
         menu_text += """
+
 🔍 **Fonctionnalités de Recherche**
 • Pour la commande /search :
   - Utilisez des mots-clés précis
@@ -207,8 +208,8 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Indiquer que le bot est en train d'écrire
         await update.message.chat.send_action(action="typing")
 
-        # Rechercher les vidéos
-        videos = await perplexity_client.search_youtube(query)
+        # Rechercher les vidéos avec yt-dlp
+        videos = await media_handler.search_youtube(query)
         if not videos:
             await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé de vidéos correspondant à ta recherche.")
             return
@@ -220,6 +221,14 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Limiter la longueur du titre si nécessaire
             if len(title) > 35:
                 title = title[:32] + "..."
+
+            # Ajouter la durée si disponible
+            if video.get('duration'):
+                duration = int(video['duration'])  # Convert to int for division
+                minutes = duration // 60
+                seconds = duration % 60
+                title = f"{title} ({minutes}:{seconds:02d})"
+
             callback_data = f"yt_{i}_{video['url']}"
             if len(callback_data) > 64:  # Limite Telegram pour callback_data
                 video_id = video['url'].split('watch?v=')[-1].split('&')[0]
@@ -240,13 +249,17 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_callback(update: Update, context: CallbackContext):
     """Gère les callbacks des boutons inline"""
+    query = update.callback_query
     try:
-        query = update.callback_query
         await query.answer()
 
         if query.data.startswith('yt_'):
             # Format: yt_index_url
-            _, index, url_or_id = query.data.split('_', 2)
+            parts = query.data.split('_', 2)
+            if len(parts) != 3:
+                raise ValueError("Format de callback incorrect")
+
+            _, index, url_or_id = parts
 
             # Reconstruire l'URL complète si nécessaire
             if not url_or_id.startswith('http'):
@@ -267,14 +280,25 @@ async def handle_callback(update: Update, context: CallbackContext):
 
         elif query.data.startswith('format_'):
             # Format: format_type_url
-            _, format_type, url = query.data.split('_', 2)
+            parts = query.data.split('_', 2)
+            if len(parts) != 3:
+                raise ValueError("Format de callback incorrect")
+
+            _, format_type, url = parts
+
+            if format_type not in ['mp3', 'mp4']:
+                raise ValueError("Format non supporté")
 
             await query.edit_message_text("*commence le téléchargement* Un moment...")
 
             # Télécharger la vidéo
             file_path = await media_handler.download_youtube_video(url, format_type)
 
-            if file_path:
+            if not file_path:
+                await query.message.reply_text("*fronce les sourcils* La vidéo est trop volumineuse ou n'est pas accessible.")
+                return
+
+            try:
                 # Envoyer le fichier
                 with open(file_path, 'rb') as f:
                     if format_type == 'mp3':
@@ -285,11 +309,17 @@ async def handle_callback(update: Update, context: CallbackContext):
                 # Nettoyer
                 media_handler.cleanup()
                 await query.message.reply_text("*range le fichier* Voici ta vidéo.")
-            else:
-                await query.message.reply_text("*fronce les sourcils* Je n'ai pas pu télécharger cette vidéo. Elle est peut-être trop volumineuse.")
+            except Exception as send_error:
+                logger.error(f"Erreur lors de l'envoi du fichier: {send_error}")
+                await query.message.reply_text("*semble confus* Je n'arrive pas à t'envoyer le fichier.")
+                media_handler.cleanup()
 
+    except ValueError as ve:
+        logger.error(f"Erreur de format dans handle_callback: {ve}")
+        await query.message.reply_text("*fronce les sourcils* Je ne comprends pas cette requête.")
     except Exception as e:
         logger.error(f"Erreur dans handle_callback: {e}")
+        logger.exception("Détails de l'erreur:")
         await query.message.reply_text("*semble troublé* Je ne peux pas traiter cette requête pour le moment.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
