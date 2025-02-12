@@ -1,9 +1,7 @@
 import os
 import httpx
 import logging
-import re
-from typing import List, Optional, Dict, Any
-from bs4 import BeautifulSoup
+from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,59 +17,53 @@ class PerplexityClient:
             "Content-Type": "application/json"
         }
 
-    async def _make_request(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-small-128k-online") -> Dict[Any, Any]:
+    async def _make_request(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-huge-128k-online") -> Dict[Any, Any]:
         """Fait une requête à l'API Perplexity avec une meilleure gestion des erreurs"""
-        url = f"{self.base_url}/search"
+        url = f"{self.base_url}/chat/completions"
 
         # Extraire la requête du dernier message utilisateur
         query = next((msg["content"] for msg in reversed(messages) if msg["role"] == "user"), "")
         logger.info(f"Requête à envoyer: {query}")
 
         data = {
-            "query": query,
-            "follow_up": True,
-            "temperature": 0.7,
+            "model": model,
+            "messages": messages,
             "max_tokens": 2048,
-            "focus": ["news", "wiki", "arxiv", "web"],
-            "search_depth": "advanced",
-            "context_level": "detailed"
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "stream": False,
+            "presence_penalty": 0,
+            "frequency_penalty": 0,
+            "search_domain_filter": [],  # Aucun filtre de domaine pour une recherche plus large
+            "return_images": False,
+            "return_related_questions": True,
+            "search_recency_filter": "month"  # Pour avoir des informations récentes
         }
 
-        logger.info(f"Envoi de la requête à {url} avec les données: {data}")
+        logger.info(f"Envoi de la requête à {url}")
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                logger.debug(f"Headers utilisés: {self.headers}")
                 response = await client.post(url, headers=self.headers, json=data)
-                logger.info(f"Code de statut de la réponse: {response.status_code}")
-
-                response_text = response.text
-                logger.info(f"Réponse brute reçue: {response_text[:500]}...")  # Log premiers 500 caractères
-
                 response.raise_for_status()
                 response_json = response.json()
-                logger.info(f"Structure de la réponse JSON: {list(response_json.keys())}")
+                logger.info("Réponse reçue avec succès")
                 return response_json
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Erreur HTTP lors de la requête Perplexity: {e.response.status_code}")
-            if e.response.status_code == 400:
-                logger.error(f"Détails de l'erreur 400: {e.response.text}")
-            raise
         except Exception as e:
             logger.error(f"Erreur lors de la requête Perplexity: {e}")
             raise
 
     async def search(self, query: str, context: Optional[str] = None) -> Dict[str, str]:
         """Effectue une recherche améliorée avec l'API Perplexity"""
-        system_prompt = """Tu es Sisyphe, un assistant de recherche érudit. Ta mission est de :
+        system_prompt = """Tu es Sisyphe, un assistant de recherche érudit. Pour chaque requête :
 
-1. Pour TOUTE recherche :
-   - Analyser en profondeur et fournir une réponse détaillée
-   - Reformuler la requête si nécessaire pour plus d'informations
-   - Traduire en français tout contenu en anglais
-   - Citer les sources utilisées
-   - Ne jamais dire qu'aucun résultat n'a été trouvé, chercher plus largement"""
+1. Effectue une recherche approfondie et analyse les sources récentes
+2. Formule des réponses claires en phrases complètes
+3. Vulgarise les concepts complexes (méthode Feynman)
+4. Reste concis mais informatif (1-2 phrases par idée)
+5. Cite systématiquement tes sources
+6. Traduis en français tout contenu anglais"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -85,46 +77,22 @@ class PerplexityClient:
             logger.info(f"Démarrage de la recherche pour la requête: {query}")
             response = await self._make_request(messages)
 
-            if not response:
-                logger.error("Réponse vide de l'API Perplexity")
-                return {"error": "Réponse vide de l'API"}
+            if "choices" not in response or not response["choices"]:
+                logger.error("Réponse invalide de l'API Perplexity")
+                return {"error": "Format de réponse invalide"}
 
-            logger.info(f"Clés disponibles dans la réponse: {list(response.keys())}")
+            formatted_response = response["choices"][0]["message"]["content"]
 
-            # Vérifier la structure de la réponse
-            if "text" in response:
-                formatted_response = response["text"]
-                logger.info("Utilisation de la clé 'text' pour la réponse")
-            elif "answer" in response:
-                formatted_response = response["answer"]
-                logger.info("Utilisation de la clé 'answer' pour la réponse")
-            elif "choices" in response and response["choices"]:
-                formatted_response = response["choices"][0].get("message", {}).get("content", "")
-                logger.info("Utilisation de la structure choices/message/content pour la réponse")
-            else:
-                logger.error(f"Structure de réponse inattendue: {response}")
-                return {"error": "Format de réponse inattendu"}
-
-            # Traitement des sources
-            if "sources" in response and response["sources"]:
-                logger.info(f"Sources trouvées: {len(response['sources'])}")
-                formatted_response += "\n\nSources :\n"
-                formatted_response += "\n".join([
-                    f"- {source.get('title', 'Source')} : {source.get('url', '#')}"
-                    for source in response["sources"]
-                ])
-            elif "citations" in response:
-                logger.info(f"Citations trouvées: {len(response['citations'])}")
+            # Ajouter les citations si présentes
+            if "citations" in response:
                 formatted_response += "\n\nSources :\n"
                 formatted_response += "\n".join([f"- {citation}" for citation in response["citations"]])
 
-            logger.info("Réponse formatée avec succès")
             return {"response": formatted_response}
 
         except Exception as e:
             logger.error(f"Erreur lors de la recherche: {e}")
-            logger.exception("Détails de l'erreur:")
-            return {"error": "Une erreur est survenue lors de la recherche. Veuillez réessayer."}
+            return {"error": f"Une erreur est survenue lors de la recherche : {str(e)}"}
 
     async def search_images(self, query: str, site: str) -> List[str]:
         """Recherche améliorée d'images sur différentes plateformes"""
@@ -273,3 +241,5 @@ class PerplexityClient:
         except Exception as e:
             logger.error(f"Erreur lors de la recherche YouTube: {e}")
             return []
+
+import re
