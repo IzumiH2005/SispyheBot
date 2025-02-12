@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import os
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, CallbackContext
 from telegram.error import TelegramError
@@ -47,7 +48,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("*semble distrait*")
     except Exception as e:
         logger.error(f"Erreur inattendue dans start_command: {e}")
-        
+
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /help"""
@@ -318,15 +319,23 @@ async def handle_callback(update: Update, context: CallbackContext):
                     if format_type == 'mp3':
                         await query.message.reply_audio(audio=f)
                     else:
-                        await query.message.reply_video(video=f)
+                        await query.message.reply_video(video=f, supports_streaming=True)
 
-                # Nettoyer
-                media_handler.cleanup()
+                # Nettoyer spécifiquement ce fichier et son dossier parent
+                media_handler.cleanup(os.path.dirname(file_path))
                 await query.message.reply_text("*range le fichier* Voici ta vidéo.")
+
+            except TelegramError as te:
+                logger.error(f"Erreur Telegram lors de l'envoi du fichier: {te}")
+                if "File is too big" in str(te):
+                    await query.message.reply_text("*semble désolé* Le fichier est trop volumineux pour être envoyé via Telegram (limite de 50MB).")
+                else:
+                    await query.message.reply_text("*semble confus* Je n'arrive pas à t'envoyer le fichier.")
+                media_handler.cleanup(os.path.dirname(file_path))
             except Exception as send_error:
                 logger.error(f"Erreur lors de l'envoi du fichier: {send_error}")
                 await query.message.reply_text("*semble confus* Je n'arrive pas à t'envoyer le fichier.")
-                media_handler.cleanup()
+                media_handler.cleanup(os.path.dirname(file_path))
 
     except ValueError as ve:
         logger.error(f"Erreur de format dans handle_callback: {ve}")

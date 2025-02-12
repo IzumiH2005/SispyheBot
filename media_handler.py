@@ -76,7 +76,12 @@ class MediaHandler:
     async def download_youtube_video(self, url: str, format_type: str = 'mp4', max_size_mb: int = 75) -> Optional[str]:
         """Télécharge une vidéo YouTube dans le format spécifié avec gestion améliorée"""
         try:
-            output_dir = self.audio_dir if format_type == 'mp3' else self.videos_dir
+            # Créer un sous-dossier unique pour ce téléchargement
+            download_id = os.urandom(8).hex()
+            output_dir = os.path.join(self.audio_dir if format_type == 'mp3' else self.videos_dir, download_id)
+            os.makedirs(output_dir, exist_ok=True)
+            logger.info(f"Dossier de téléchargement créé: {output_dir}")
+
             output_template = os.path.join(output_dir, f'%(title)s.%(ext)s')
 
             # Options de base communes
@@ -86,7 +91,7 @@ class MediaHandler:
                 'no_warnings': True,
                 'writethumbnail': False,
                 'writeinfojson': False,
-                'ffmpeg_location': shutil.which('ffmpeg'),  # Utiliser le chemin complet de ffmpeg
+                'ffmpeg_location': shutil.which('ffmpeg'),
                 'max_filesize': max_size_mb * 1024 * 1024,  # Limite à 75MB
             }
 
@@ -144,7 +149,8 @@ class MediaHandler:
 
                 actual_size = os.path.getsize(filename)
                 if actual_size > max_size_mb * 1024 * 1024:
-                    os.remove(filename)
+                    # Nettoyer le dossier spécifique avant de lever l'exception
+                    shutil.rmtree(output_dir, ignore_errors=True)
                     raise Exception(f"Fichier final trop volumineux: {actual_size / (1024 * 1024):.1f}MB")
 
                 return filename
@@ -152,6 +158,9 @@ class MediaHandler:
         except Exception as e:
             logger.error(f"Erreur lors du téléchargement de la vidéo {url}: {e}")
             logger.exception("Détails de l'erreur:")
+            # Nettoyer le dossier en cas d'erreur
+            if 'output_dir' in locals():
+                shutil.rmtree(output_dir, ignore_errors=True)
             return None
 
     async def download_images(self, urls: List[str]) -> List[str]:
@@ -240,10 +249,27 @@ class MediaHandler:
             logger.exception("Détails de l'erreur:")
             return []
 
-    def cleanup(self):
-        """Nettoie tous les fichiers temporaires"""
+    def cleanup(self, specific_path: Optional[str] = None):
+        """Nettoie les fichiers temporaires
+        Args:
+            specific_path: Chemin spécifique à nettoyer. Si None, nettoie tous les dossiers temporaires.
+        """
         try:
-            shutil.rmtree(self.base_temp_dir)
-            logger.info("Nettoyage des fichiers temporaires effectué")
+            if specific_path and os.path.exists(specific_path):
+                if os.path.isfile(specific_path):
+                    os.remove(specific_path)
+                    logger.info(f"Fichier temporaire supprimé: {specific_path}")
+                else:
+                    shutil.rmtree(specific_path, ignore_errors=True)
+                    logger.info(f"Dossier temporaire supprimé: {specific_path}")
+            else:
+                # Nettoyer tous les dossiers temporaires
+                shutil.rmtree(self.base_temp_dir, ignore_errors=True)
+                # Recréer les dossiers de base
+                os.makedirs(self.images_dir, exist_ok=True)
+                os.makedirs(self.videos_dir, exist_ok=True)
+                os.makedirs(self.audio_dir, exist_ok=True)
+                logger.info("Nettoyage complet des fichiers temporaires effectué")
         except Exception as e:
             logger.error(f"Erreur lors du nettoyage des fichiers temporaires: {e}")
+            logger.exception("Détails de l'erreur:")
