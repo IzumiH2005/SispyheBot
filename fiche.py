@@ -1,7 +1,9 @@
 import os
 import logging
+import asyncio
 from openai import OpenAI
 from typing import Dict, Any, Optional
+from scraper import StartpageImageScraper
 
 logger = logging.getLogger(__name__)
 
@@ -17,38 +19,24 @@ class FicheClient:
             api_key=self.api_key,
             base_url="https://api.perplexity.ai"
         )
+        self.image_scraper = StartpageImageScraper()
 
     async def create_fiche(self, titre: str) -> Dict[str, Any]:
-        """Crée une fiche détaillée pour un anime/série/webtoon"""
+        """Crée une fiche détaillée pour un anime/série"""
         try:
             if not titre.strip():
                 return {"error": "Le titre ne peut pas être vide"}
 
             logger.info(f"Création d'une fiche pour: {titre}")
 
-            # Configuration du prompt pour la recherche d'informations
-            system_content = """Tu es un expert en anime, manga, séries et webtoons.
-            Ta tâche est de créer une fiche détaillée et complète.
+            # Rechercher une image de couverture
+            logger.info(f"Recherche d'une image pour: {titre}")
+            image_urls = await self.image_scraper.search_images(f"{titre} anime official cover")
+            image_url = image_urls[0] if image_urls else None
+            logger.info(f"Image trouvée: {image_url}")
 
-            Recherche et collecte TOUTES les informations suivantes :
-            - Titre complet en français/anglais
-            - Titre original en japonais
-            - Type exact (anime, film, série TV, OVA, webtoon, etc.)
-            - Créateur(s) et équipe de production
-            - Studio/Production
-            - Année et période de diffusion
-            - Genres précis
-            - Nombre d'épisodes/chapitres/durée
-            - Description détaillée de l'univers
-            - Synopsis complet
-            - Personnages principaux (3-4 maximum) avec descriptions
-            - Thèmes majeurs (3-4 maximum)
-            - Adaptations et œuvres dérivées
-
-            Retourne UNIQUEMENT les informations organisées dans ce format EXACT :
-
-┌───────────────────────────────────────────────┐
-│               ✦ [TITRE] ✦                    │
+            template = f"""┌───────────────────────────────────────────────┐
+│               ✦ {titre} ✦                    │
 │              *[TITRE EN JAPONAIS]*            │
 └───────────────────────────────────────────────┘
 
@@ -79,15 +67,20 @@ class FicheClient:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
 ✦ **ADAPTATIONS & ŒUVRES ANNEXES** ✦  
 ▪ [Manga/Anime/etc.]  
-▪ [Manga/Anime/etc.]  
+▪ [Manga/Anime/etc.]"""
 
-IMPORTANT :
-1. Utilise EXACTEMENT ce format avec tous les caractères spéciaux
-2. Remplace les [crochets] par les vraies informations
-3. Garde les sections vides si pas d'information
-4. Conserve la mise en forme Markdown (**, *, etc.)
-5. Garde les lignes de séparation ━━━
-6. N'ajoute rien d'autre que ce format"""
+            system_content = f"""Tu es un expert en anime, manga, séries et webtoons.
+Recherche toutes les informations sur {titre} et remplis directement ce template:
+
+{template}
+
+RÈGLES IMPORTANTES:
+1. Remplace chaque [crochet] par l'information réelle correspondante
+2. Garde EXACTEMENT la mise en forme (**, *, ◈, etc.)
+3. Laisse les sections vides avec [crochet] si information non trouvée
+4. N'ajoute rien d'autre en dehors de ce format
+5. Conserve tous les symboles spéciaux (┌, └, ━, etc.)
+6. N'ajoute PAS de section "Sources:" dans le contenu"""
 
             messages = [
                 {
@@ -96,46 +89,48 @@ IMPORTANT :
                 },
                 {
                     "role": "user",
-                    "content": f"Crée une fiche détaillée pour : {titre}"
+                    "content": f"Crée une fiche complète pour : {titre}"
                 }
             ]
 
             logger.info("Envoi de la requête à l'API Perplexity")
-            response = self.client.chat.completions.create(
-                model="sonar-pro",
-                messages=messages,
-                temperature=0.2,
-                top_p=0.9,
-                stream=False
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.chat.completions.create,
+                    model="sonar-pro",
+                    messages=messages,
+                    temperature=0.1,
+                    stream=False
+                ),
+                timeout=45.0
             )
 
-            logger.info(f"Réponse reçue du modèle: {response.model}")
-            logger.info(f"ID de la réponse: {response.id}")
-
-            # Extraire le contenu et les citations
             content = response.choices[0].message.content
-            citations = []
 
-            if hasattr(response, 'citations'):
-                logger.info("Citations trouvées dans l'objet response")
-                citations = response.citations
-            else:
-                logger.info("Extraction des URLs depuis le contenu")
-                # On garde les liens pour les ajouter à la fin
-                citations = [url for url in response.choices[0].message.content.split() if url.startswith('http')]
+            # Extraire les sources et les formater correctement
+            sources = [url for url in content.split() if url.startswith('http')]
 
-            # Ajout des sources à la fin de la fiche
-            if citations:
-                content += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                content += "✦ **LIENS & RÉFÉRENCES** ✦\n"
-                for source in citations:
+            # Toujours ajouter la section des sources à la fin
+            content += "\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            content += "✦ **LIENS & RÉFÉRENCES** ✦\n"
+            if sources:
+                for source in sources:
                     content += f"🔗 {source}\n"
+            else:
+                content += "🔗 Aucune source en ligne disponible\n"
+
+            if image_url:
+                content += f"\n\n![Couverture]({image_url})"
 
             return {
                 "fiche": content,
-                "sources": citations
+                "sources": sources,
+                "image_url": image_url
             }
 
+        except asyncio.TimeoutError:
+            logger.error("Timeout lors de la création de la fiche")
+            return {"error": "La création de la fiche prend trop de temps. Essayez à nouveau."}
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Erreur lors de la création de la fiche: {error_msg}")
@@ -145,7 +140,5 @@ IMPORTANT :
                 return {"error": "Limite de requêtes atteinte"}
             elif "unauthorized" in error_msg.lower():
                 return {"error": "Erreur d'authentification avec l'API"}
-            elif "timeout" in error_msg.lower():
-                return {"error": "La requête a pris trop de temps"}
 
             return {"error": f"Une erreur est survenue: {error_msg}"}

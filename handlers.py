@@ -636,7 +636,7 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Limite de temps pour la création de la fiche
             result = await asyncio.wait_for(
                 fiche_client.create_fiche(titre),
-                timeout=25.0
+                timeout=45.0  # Augmenté à 45 secondes pour correspondre à fiche.py
             )
 
             if isinstance(result, dict) and "error" in result:
@@ -653,6 +653,7 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             fiche = result.get("fiche", "")
+            image_url = result.get("image_url")
 
             if not fiche or not fiche.strip():
                 logger.error("Fiche vide reçue de l'API")
@@ -668,6 +669,39 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown',
                 disable_web_page_preview=True
             )
+
+            # Si une image est disponible, la télécharger et l'envoyer
+            if image_url:
+                try:
+                    logger.info(f"Téléchargement de l'image: {image_url}")
+                    image_paths = await media_handler.download_images([image_url])
+
+                    if image_paths and len(image_paths) > 0:
+                        image_path = image_paths[0]
+                        logger.info(f"Image téléchargée avec succès: {image_path}")
+
+                        try:
+                            with open(image_path, 'rb') as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    caption="*range soigneusement l'image* Voici l'illustration.",
+                                    parse_mode='Markdown'
+                                )
+                                logger.info("Image envoyée avec succès")
+                        except Exception as photo_error:
+                            logger.error(f"Erreur lors de l'envoi de la photo: {photo_error}")
+                        finally:
+                            # Nettoyer les fichiers temporaires
+                            try:
+                                media_handler.cleanup()
+                                logger.info("Nettoyage des fichiers temporaires effectué")
+                            except Exception as cleanup_error:
+                                logger.error(f"Erreur lors du nettoyage: {cleanup_error}")
+                    else:
+                        logger.error("Aucune image n'a été téléchargée")
+                except Exception as e:
+                    logger.error(f"Erreur lors du traitement de l'image: {e}")
+                    logger.exception("Détails de l'erreur pour l'image:")
 
         except asyncio.TimeoutError:
             logger.error("Timeout lors de la création de la fiche")

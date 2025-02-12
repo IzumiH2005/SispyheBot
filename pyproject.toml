@@ -16,6 +16,7 @@ dependencies = [
     "psycopg2-binary>=2.9.10",
     "python-dotenv>=1.0.1",
     "python-telegram-bot>=21.10",
+    "requests>=2.32.3",
     "telegram>=0.0.1",
     "trafilatura>=2.0.0",
     "twilio>=9.4.5",
