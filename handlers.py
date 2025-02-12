@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ContextTypes, CallbackContext
 from telegram.error import TelegramError
 from persona import SisyphePersona
@@ -295,7 +295,7 @@ Instructions de formatage :
             await update.message.reply_text(error_message, parse_mode='Markdown')
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /image"""
+    """Gère la commande /image avec une approche ultra-simplifiée et logs détaillés"""
     progress_message = None
     try:
         query = ' '.join(context.args) if context.args else None
@@ -315,62 +315,109 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # Recherche d'images
-        scraper = GoogleImageScraper()
-        image_urls = await scraper.search_images(query, max_results=10)
+        scraper = GoogleImageScraper() # Using the new class
+        logger.info(f"[DEBUG] Début de la recherche avec GoogleImageScraper pour query: {query}")
+        image_urls = await scraper.search_images(query, max_results=10) # Increased results
+        logger.info(f"[DEBUG] URLs trouvées ({len(image_urls)}): {image_urls}")
 
         if not image_urls:
-            logger.warning("Aucune URL d'image trouvée")
+            logger.warning("[DEBUG] Aucune URL d'image trouvée, arrêt du processus")
             await progress_message.edit_text(
                 "*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.",
                 parse_mode='Markdown'
             )
             return
 
-        # Préparer l'album d'images
-        media_group = []
-        temp_files = []  # Pour garder une trace des fichiers à nettoyer
+        # Télécharger toutes les images d'abord
+        await progress_message.edit_text(
+            "*examine les images*\n_Préparation des images..._",
+            parse_mode='Markdown'
+        )
 
-        # Télécharger les images (limité aux 5 premières réussies)
+        image_paths = []
         for url in image_urls:
-            if len(media_group) >= 5:  # Arrêter après 5 images
-                break
-
             try:
+                logger.info(f"[DEBUG] Tentative de téléchargement pour URL: {url}")
                 image_path = await media_handler.download_image(url)
                 if image_path and os.path.exists(image_path):
-                    with open(image_path, 'rb') as photo_file:
-                        media_group.append(
-                            InputMediaPhoto(media=InputFile(photo_file))
-                        )
-                        temp_files.append(image_path)
-                    logger.info(f"Image ajoutée à l'album: {image_path}")
+                    logger.info(f"[DEBUG] Image téléchargée avec succès: {image_path}")
+                    image_paths.append(image_path)
+                else:
+                    logger.warning(f"[DEBUG] Échec du téléchargement pour {url}, path: {image_path}")
             except Exception as e:
-                logger.error(f"Erreur lors du téléchargement de {url}: {str(e)}")
+                logger.error(f"[DEBUG] Erreur lors du téléchargement de {url}: {str(e)}")
                 continue
 
-        if not media_group:
-            logger.warning("Aucune image n'a pu être préparée pour l'envoi")
+        if not image_paths:
+            logger.warning("[DEBUG] Aucune image n'a pu être téléchargée")
             await progress_message.edit_text(
-                "*semble déçu* Je n'ai pas pu préparer les images.",
+                "*semble déçu* Je n'ai pas pu télécharger les images.",
                 parse_mode='Markdown'
             )
             return
 
-        # Envoyer l'album
-        try:
-            await update.message.reply_media_group(media=media_group)
-            message_text = (
-                "*range ses documents* Voici les images que j'ai trouvées "
-                f"({len(media_group)} image{'s' if len(media_group) > 1 else ''})."
-            )
+        # Envoyer les images une par une
+        sent_images = 0
+        logger.info(f"[DEBUG] Début de l'envoi des images. Nombre d'images à envoyer: {len(image_paths)}")
+        for image_path in image_paths:
+            try:
+                # Vérifier que le fichier existe et n'est pas vide
+                if not os.path.exists(image_path) or os.path.getsize(image_path) == 0:
+                    logger.error(f"[DEBUG] Fichier invalide ou vide: {image_path}")
+                    continue
+
+                # Vérifier la taille du fichier
+                file_size = os.path.getsize(image_path)
+                logger.info(f"[DEBUG] Taille du fichier {image_path}: {file_size/1024/1024:.1f}MB")
+                if file_size > 5 * 1024 * 1024:  # 5MB
+                    logger.warning(f"[DEBUG] Image trop volumineuse ({file_size/1024/1024:.1f}MB): {image_path}")
+                    continue
+
+                # Envoi avec retry
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(f"[DEBUG] Tentative d'envoi {attempt + 1}/{max_retries} pour {image_path}")
+                        with open(image_path, 'rb') as photo:
+                            await update.message.reply_photo(
+                                photo=photo,
+                                caption="*observe l'image avec intérêt*",
+                                parse_mode='Markdown'
+                            )
+                        sent_images += 1
+                        logger.info(f"[DEBUG] Image envoyée avec succès: {image_path}")
+                        break
+                    except TelegramError as te:
+                        logger.error(f"[DEBUG] Erreur Telegram lors de la tentative {attempt + 1}: {str(te)}")
+                        if attempt < max_retries - 1:
+                            logger.warning(f"[DEBUG] Nouvelle tentative dans 1 seconde...")
+                            await asyncio.sleep(1)
+                        else:
+                            logger.error(f"[DEBUG] Échec définitif après {max_retries} tentatives")
+                            raise
+
+            except Exception as e:
+                logger.error(f"[DEBUG] Erreur lors de l'envoi de l'image {image_path}: {str(e)}")
+                continue
+            finally:
+                # Nettoyage des fichiers après chaque envoi
+                try:
+                    if os.path.exists(image_path):
+                        logger.info(f"[DEBUG] Nettoyage du fichier: {image_path}")
+                        media_handler.cleanup(image_path)
+                except Exception as e:
+                    logger.error(f"[DEBUG] Erreur lors du nettoyage de {image_path}: {str(e)}")
+
+        # Message final
+        logger.info(f"[DEBUG] Processus terminé. Images envoyées: {sent_images}/{len(image_paths)}")
+        if sent_images > 0:
             await progress_message.edit_text(
-                message_text,
+                "*range ses documents* Voici ce que j'ai trouvé.",
                 parse_mode='Markdown'
             )
-        except Exception as e:
-            logger.error(f"Erreur lors de l'envoi de l'album: {e}")
+        else:
             await progress_message.edit_text(
-                "*semble troublé* Je n'ai pas pu envoyer les images.",
+                "*semble déçu* Je n'ai pas pu envoyer les images.",
                 parse_mode='Markdown'
             )
 
@@ -382,14 +429,8 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
     finally:
-        # Nettoyage des fichiers temporaires
-        for temp_file in temp_files:
-            try:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                    logger.info(f"Fichier nettoyé: {temp_file}")
-            except Exception as e:
-                logger.error(f"Erreur lors du nettoyage de {temp_file}: {str(e)}")
+        # Nettoyage final
+        logger.info("Nettoyage final des ressources")
         media_handler.cleanup()
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
