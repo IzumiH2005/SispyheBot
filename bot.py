@@ -1,11 +1,26 @@
 import asyncio
 import logging
 import nest_asyncio
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters
+)
 from telegram.error import TelegramError
 from config import TELEGRAM_TOKEN
-from handlers import start_command, help_command, handle_message
+from handlers import (
+    start_command,
+    help_command,
+    menu_command,
+    search_command,
+    image_command,
+    yt_command,
+    handle_message,
+    handle_callback
+)
 
 # Application de nest_asyncio pour gérer les boucles d'événements imbriquées
 nest_asyncio.apply()
@@ -27,7 +42,15 @@ async def main():
         # Ajout des handlers
         application.add_handler(CommandHandler('start', start_command))
         application.add_handler(CommandHandler('help', help_command))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        application.add_handler(CommandHandler('menu', menu_command))
+        application.add_handler(CommandHandler('search', search_command))
+        application.add_handler(CommandHandler('image', image_command))
+        application.add_handler(CommandHandler('yt', yt_command))
+        application.add_handler(CallbackQueryHandler(handle_callback))
+        application.add_handler(MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            handle_message
+        ))
 
         # Démarrage du bot
         logger.info("Démarrage du bot...")
