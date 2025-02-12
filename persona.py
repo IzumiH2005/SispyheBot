@@ -28,11 +28,19 @@ class SisyphePersona:
         if not text.strip():
             return "*tourne une page sans répondre*"
 
-        # Si la réponse est trop longue, la raccourcir
-        if len(text) > 200 and not any(marker in text.lower() for marker in ['explique', 'développe']):
-            text = text.split('.')[0] + '.'
+        # Liste des mots-clés indiquant une action physique
+        action_keywords = ['tourne', 'pose', 'lit', 'ferme', 'ouvre', 'fronce']
 
-        # Ajouter des actions si nécessaire
+        # Si la réponse commence déjà par une action entre astérisques, la laisser telle quelle
+        if text.strip().startswith('*') and text.strip().endswith('*'):
+            return text
+
+        # Si c'est une action simple (courte et contenant un mot-clé d'action)
+        is_action = any(keyword in text.lower() for keyword in action_keywords) and len(text.split()) < 6
+        if is_action and not text.startswith('*'):
+            return f"*{text}*"
+
+        # Pour les réponses longues ou explicatives, ajouter une action au début si nécessaire
         if 'explique' in text.lower():
             text = "*pose son livre* " + text
 
