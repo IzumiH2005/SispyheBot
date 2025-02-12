@@ -295,49 +295,91 @@ Instructions de formatage :
             await update.message.reply_text(error_message, parse_mode='Markdown')
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /image avec le scraper Startpage amélioré"""
+    """Gère la commande /image avec une meilleure gestion des erreurs et des retries"""
+    progress_message = None
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
             await update.message.reply_text("*lève un sourcil* Quelle image cherches-tu ?", parse_mode='Markdown')
             return
 
+        # Message de progression initial
+        progress_message = await update.message.reply_text(
+            "*parcourt sa collection*\n_Recherche d'images en cours..._",
+            parse_mode='Markdown'
+        )
+
         # Indiquer que le bot est en train d'écrire
         await update.message.chat.send_action(action="typing")
 
         logger.info(f"Recherche d'images pour la requête: {query}")
 
-        # Utiliser le scraper Startpage
+        # Utiliser le scraper Startpage avec retry
+        max_retries = 3
         scraper = StartpageImageScraper()
-        image_urls = await scraper.search_images(query)
+
+        for attempt in range(max_retries):
+            image_urls = await scraper.search_images(query, max_results=5)
+            if image_urls:
+                break
+            logger.warning(f"Tentative {attempt + 1}/{max_retries} échouée")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(1)  # Petit délai entre les tentatives
 
         if not image_urls:
             logger.warning(f"Aucune image trouvée pour la requête: {query}")
-            await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.", parse_mode='Markdown')
+            await progress_message.edit_text(
+                "*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.",
+                parse_mode='Markdown'
+            )
             return
 
         logger.info(f"Nombre d'URLs d'images trouvées: {len(image_urls)}")
 
-        # Télécharger les images
+        # Mise à jour du message de progression
+        await progress_message.edit_text(
+            "*examine les images*\n_Téléchargement en cours..._",
+            parse_mode='Markdown'
+        )
+
+        # Télécharger les images avec retry
         image_paths = await media_handler.download_images(image_urls)
 
         if not image_paths:
             logger.error("Échec du téléchargement des images")
-            await update.message.reply_text("*semble confus* Je n'ai pas pu télécharger les images.", parse_mode='Markdown')
+            await progress_message.edit_text(
+                "*semble confus* Je n'ai pas pu télécharger les images.",
+                parse_mode='Markdown'
+            )
             return
 
         # Envoyer les images
-        await update.message.reply_text("*parcourt sa collection* Voici ce que j'ai trouvé :", parse_mode='Markdown')
+        await progress_message.edit_text(
+            "*présente sa sélection* Voici ce que j'ai trouvé :",
+            parse_mode='Markdown'
+        )
 
+        successful_sends = 0
         for path in image_paths:
             try:
                 logger.info(f"Tentative d'envoi de l'image: {path}")
                 with open(path, 'rb') as f:
-                    await update.message.reply_photo(photo=f)
+                    await update.message.reply_photo(
+                        photo=f,
+                        caption="*observe l'image avec intérêt*",
+                        parse_mode='Markdown'
+                    )
+                successful_sends += 1
                 logger.info(f"Image envoyée avec succès: {path}")
             except Exception as e:
                 logger.error(f"Erreur lors de l'envoi de l'image {path}: {e}")
                 continue
+
+        if successful_sends == 0:
+            await update.message.reply_text(
+                "*semble déçu* Je n'ai pas pu envoyer les images.",
+                parse_mode='Markdown'
+            )
 
         # Nettoyer les fichiers
         media_handler.cleanup()
@@ -346,7 +388,12 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Erreur dans image_command: {e}")
         logger.exception("Détails de l'erreur:")
-        await update.message.reply_text("*semble troublé* Je ne peux pas traiter ces images pour le moment.", parse_mode='Markdown')
+        error_message = "*semble troublé* Je ne peux pas traiter ces images pour le moment."
+
+        if progress_message:
+            await progress_message.edit_text(error_message, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(error_message, parse_mode='Markdown')
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /yt"""
@@ -605,7 +652,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("*fronce les sourcils* Une pensée m'échappe...", parse_mode='Markdown')
 
 async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /fiche pour créer des fiches détaillées d'animes/séries"""
+    """Gère la commande /fiche avec une meilleure gestion des images de couverture"""
     progress_message = None
     try:
         # Récupérer le titre
@@ -636,20 +683,16 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Limite de temps pour la création de la fiche
             result = await asyncio.wait_for(
                 fiche_client.create_fiche(titre),
-                timeout=45.0  # Augmenté à 45 secondes pour correspondre à fiche.py
+                timeout=45.0
             )
 
             if isinstance(result, dict) and "error" in result:
                 error_msg = result["error"]
                 logger.error(f"Erreur retournée par l'API: {error_msg}")
-                if "quota" in error_msg.lower():
-                    response = "*ferme son livre* J'ai besoin d'une pause, mes ressources sont épuisées."
-                elif "timeout" in error_msg.lower():
-                    response = "*fronce les sourcils* La recherche prend trop de temps. Essaie une autre requête."
-                else:
-                    response = f"*semble contrarié* {error_msg}"
-
-                await progress_message.edit_text(response, parse_mode='Markdown')
+                await progress_message.edit_text(
+                    f"*semble contrarié* {error_msg}",
+                    parse_mode='Markdown'
+                )
                 return
 
             fiche = result.get("fiche", "")
@@ -670,38 +713,74 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 disable_web_page_preview=True
             )
 
-            # Si une image est disponible, la télécharger et l'envoyer
-            if image_url:
+            # Amélioration de la gestion des images et tentative de récupération d'image alternative
+            max_attempts = 3
+            image_sent = False
+
+            for attempt in range(max_attempts):
                 try:
-                    logger.info(f"Téléchargement de l'image: {image_url}")
-                    image_paths = await media_handler.download_images([image_url])
+                    if image_url:
+                        logger.info(f"Tentative {attempt + 1}: Téléchargement de l'image de couverture: {image_url}")
+                        image_paths = await media_handler.download_images([image_url])
 
-                    if image_paths and len(image_paths) > 0:
-                        image_path = image_paths[0]
-                        logger.info(f"Image téléchargée avec succès: {image_path}")
-
-                        try:
-                            with open(image_path, 'rb') as f:
-                                await update.message.reply_photo(
-                                    photo=f,
-                                    caption="*range soigneusement l'image* Voici l'illustration.",
-                                    parse_mode='Markdown'
-                                )
-                                logger.info("Image envoyée avec succès")
-                        except Exception as photo_error:
-                            logger.error(f"Erreur lors de l'envoi de la photo: {photo_error}")
-                        finally:
-                            # Nettoyer les fichiers temporaires
+                        if image_paths and len(image_paths) > 0:
+                            image_path = image_paths[0]
                             try:
-                                media_handler.cleanup()
-                                logger.info("Nettoyage des fichiers temporaires effectué")
-                            except Exception as cleanup_error:
-                                logger.error(f"Erreur lors du nettoyage: {cleanup_error}")
-                    else:
-                        logger.error("Aucune image n'a été téléchargée")
+                                with open(image_path, 'rb') as f:
+                                    await update.message.reply_photo(
+                                        photo=f,
+                                        caption="*présente la couverture avec élégance*",
+                                        parse_mode='Markdown'
+                                    )
+                                image_sent = True
+                                break
+                            except Exception as photo_error:
+                                logger.error(f"Erreur lors de l'envoi de la photo: {photo_error}")
+
+                    if not image_sent:
+                        # Essayer de trouver une image alternative
+                        logger.info(f"Tentative {attempt + 1}: Recherche d'une image alternative")
+                        scraper = StartpageImageScraper()
+                        search_queries = [
+                            f"{titre} anime cover official",
+                            f"{titre} anime poster",
+                            f"{titre} anime key visual"
+                        ]
+
+                        for query in search_queries:
+                            alt_image_urls = await scraper.search_images(query, max_results=1)
+                            if alt_image_urls:
+                                alt_image_paths = await media_handler.download_images(alt_image_urls)
+                                if alt_image_paths and len(alt_image_paths) > 0:
+                                    with open(alt_image_paths[0], 'rb') as f:
+                                        await update.message.reply_photo(
+                                            photo=f,
+                                            caption="*partage une illustration représentative*",
+                                            parse_mode='Markdown'
+                                        )
+                                    image_sent = True
+                                    break
+
+                            if image_sent:
+                                break
+
+                        if image_sent:
+                            break
+
+                    if not image_sent and attempt < max_attempts - 1:
+                        await asyncio.sleep(1)  # Petit délai entre les tentatives
+
                 except Exception as e:
-                    logger.error(f"Erreur lors du traitement de l'image: {e}")
-                    logger.exception("Détails de l'erreur pour l'image:")
+                    logger.error(f"Erreur lors du traitement de l'image (tentative {attempt + 1}): {e}")
+                    if attempt == max_attempts - 1:
+                        logger.exception("Détails de l'erreur pour l'image:")
+                finally:
+                    # Nettoyer les fichiers temporaires après chaque tentative
+                    media_handler.cleanup()
+                    logger.info("Nettoyage des fichiers temporaires effectué")
+
+            if not image_sent:
+                logger.warning("Impossible de trouver ou d'envoyer une image de couverture")
 
         except asyncio.TimeoutError:
             logger.error("Timeout lors de la création de la fiche")

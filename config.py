@@ -12,7 +12,10 @@ logging.basicConfig(
 load_dotenv()
 
 # Configuration des tokens
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # Modifié pour utiliser TELEGRAM_TOKEN
+if not TELEGRAM_TOKEN:
+    raise ValueError("Le token Telegram n'est pas configuré dans les variables d'environnement")
+
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Configuration du persona pour Gemini
