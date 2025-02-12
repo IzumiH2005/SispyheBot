@@ -158,29 +158,26 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Limite de temps pour la recherche
             result = await asyncio.wait_for(
                 perplexity_client.search(query),
-                timeout=25.0  # Augmenté à 25 secondes pour les recherches complexes
+                timeout=25.0
             )
-
-            logger.info(f"Résultat de la recherche pour '{query}': {result}")
 
             if "error" in result:
                 error_msg = result["error"]
                 logger.error(f"Erreur retournée par l'API: {error_msg}")
-                # Messages d'erreur plus spécifiques selon le type d'erreur
                 if "quota" in error_msg.lower():
                     response = "*ferme son livre* J'ai besoin d'une pause, mes ressources sont épuisées."
                 elif "timeout" in error_msg.lower():
                     response = "*fronce les sourcils* La recherche prend trop de temps. Essaie une requête plus simple."
-                elif "reformuler" in error_msg.lower():
-                    response = "*ajuste ses lunettes* Pourrais-tu reformuler ta question différemment ?"
                 else:
                     response = f"*semble contrarié* {error_msg}"
 
                 await progress_message.edit_text(response, parse_mode='Markdown')
                 return
 
-            response = result.get("response")
-            if not response:
+            response_text = result.get("response", "")
+            sources = result.get("sources", [])
+
+            if not response_text:
                 logger.error("Réponse vide reçue de l'API")
                 await progress_message.edit_text(
                     "*fronce les sourcils* Je n'ai pas trouvé d'information pertinente.",
@@ -188,9 +185,19 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
+            # Utiliser Gemini pour structurer la réponse
+            context_message = (
+                f"Organise de façon sophistiquée et claire les informations suivantes en français :\n\n"
+                f"{response_text}\n\n"
+                f"Sources à citer :\n"
+                + "\n".join([f"- {source}" for source in sources])
+            )
+
+            formatted_response = await sisyphe.get_response(context_message)
+
             logger.info("Réponse formatée et envoyée avec succès")
             await progress_message.edit_text(
-                f"*termine sa recherche*\n\n{response}",
+                formatted_response,
                 parse_mode='Markdown'
             )
 

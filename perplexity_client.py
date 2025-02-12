@@ -2,8 +2,8 @@ import os
 import logging
 from openai import OpenAI
 from typing import Dict, Any, List, Optional
-import httpx
 import re
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -20,106 +20,193 @@ class PerplexityClient:
             base_url="https://api.perplexity.ai"
         )
 
-    async def _make_request(self, messages: list) -> Dict[Any, Any]:
-        """Fait une requête optimisée à l'API Perplexity"""
+    def _detect_time_filter(self, query: str) -> Optional[str]:
+        """Détecte si la requête contient des indicateurs temporels"""
+        # Mots-clés indiquant une recherche d'actualité
+        recency_keywords = {
+            # Actualités très récentes (24h)
+            'recent': 'day',
+            'récent': 'day',
+            'dernière': 'day',
+            'dernières': 'day',
+            'actuel': 'day',
+            'actuelles': 'day',
+            "aujourd'hui": 'day',
+            'dernier': 'day',
+            'derniers': 'day',
+            'récente': 'day',
+            'récentes': 'day',
+            'actualité': 'day',
+            'actualités': 'day',
+            'news': 'day',
+
+            # Par semaine
+            'cette semaine': 'week',
+            'semaine dernière': 'week',
+            'hebdomadaire': 'week',
+
+            # Par mois
+            'ce mois': 'month',
+            'mois dernier': 'month',
+            'mensuel': 'month',
+            'mensuelle': 'month',
+
+            # Par année
+            'cette année': 'year',
+            'année en cours': 'year',
+            'annuel': 'year',
+            'annuelle': 'year',
+            '2025': 'year',  # année courante
+            '2024': 'custom'  # année précédente
+        }
+
+        query_lower = query.lower()
+
+        # Vérifier les mots-clés de récence
+        for keyword, period in recency_keywords.items():
+            if keyword in query_lower:
+                logger.info(f"Filtre temporel trouvé: {period} pour le mot-clé: {keyword}")
+                return period
+
+        # Recherche de dates spécifiques (format: YYYY, MM/YYYY, DD/MM/YYYY)
+        date_patterns = [
+            r'\b\d{4}\b',  # YYYY
+            r'\b\d{1,2}/\d{4}\b',  # MM/YYYY
+            r'\b\d{1,2}/\d{1,2}/\d{4}\b'  # DD/MM/YYYY
+        ]
+
+        for pattern in date_patterns:
+            if re.search(pattern, query):
+                logger.info(f"Date spécifique trouvée dans la requête: {re.search(pattern, query).group()}")
+                return 'custom'
+
+        logger.info("Aucun filtre temporel détecté dans la requête")
+        return None
+
+    async def _make_request(self, messages: list, time_filter: Optional[str] = None) -> Dict[Any, Any]:
+        """Fait une requête à l'API Perplexity avec gestion du temps et des sources"""
         try:
-            logger.info(f"Envoi de la requête à Perplexity avec les messages : {messages}")
+            logger.info("Structure complète de la requête:")
+            logger.info(f"API Key présente: {'Oui' if self.api_key else 'Non'}")
+            logger.info(f"Filtre temporel: {time_filter if time_filter else 'Aucun'}")
 
-            response = self.client.chat.completions.create(
-                model="sonar-pro",
-                messages=messages,
-                temperature=0.1,  # Réduit pour des réponses plus précises
-                presence_penalty=0.0,
-                frequency_penalty=0.0,
-                top_p=0.9
-            )
+            # Configuration de base suivant exactement le blueprint
+            request_kwargs = {
+                "model": "sonar-pro",  # Utilisation cohérente du modèle
+                "messages": messages,
+                "temperature": 0.2,
+                "top_p": 0.9
+            }
 
-            # Log detailed response information
-            logger.debug(f"Réponse brute de l'API: {response}")
-            logger.info(f"Modèle utilisé: {response.model}")
-            logger.info(f"Nombre de choix: {len(response.choices)}")
+            logger.info(f"Paramètres de la requête: {request_kwargs}")
 
-            # Vérifier si la réponse est valide
-            if not response or not response.choices:
-                logger.error("Réponse invalide: pas de choices dans la réponse")
-                raise ValueError("Réponse invalide de l'API")
+            try:
+                response = self.client.chat.completions.create(**request_kwargs)
+                logger.info(f"Réponse reçue du modèle: {response.model}")
+                logger.info(f"ID de la réponse: {response.id}")
+            except Exception as e:
+                logger.error(f"Erreur lors de l'appel API: {str(e)}")
+                logger.error(f"Paramètres utilisés: {request_kwargs}")
+                raise
 
-            logger.info("Réponse valide reçue de l'API")
+            if not response.choices:
+                logger.error("Pas de choix dans la réponse")
+                raise ValueError("Réponse invalide: pas de choix disponible")
+
+            content = response.choices[0].message.content
+            # Extraire les citations si disponibles
+            citations = []
+            if hasattr(response, 'citations'):
+                citations = response.citations
+
             return {
-                "content": response.choices[0].message.content.strip()
+                "response": content,
+                "sources": citations
             }
 
         except Exception as e:
-            logger.error(f"Erreur détaillée lors de la requête Perplexity: {str(e)}")
-            error_type = type(e).__name__
-            error_msg = str(e).lower()
+            error_msg = str(e)
+            logger.error(f"Erreur lors de la requête Perplexity: {error_msg}")
 
-            if "quota" in error_msg:
-                logger.error("Erreur de quota détectée")
+            if "quota" in error_msg.lower():
                 return {"error": "Limite de requêtes atteinte"}
-            elif "unauthorized" in error_msg or "authentication" in error_msg:
-                logger.error("Erreur d'authentification détectée")
+            elif "unauthorized" in error_msg.lower() or "authentication" in error_msg.lower():
                 return {"error": "Erreur d'authentification avec l'API"}
-            elif "invalid" in error_msg:
-                logger.error(f"Requête invalide détectée: {str(e)}")
-                return {"error": "Requête invalide"}
+            elif "invalid" in error_msg.lower():
+                return {"error": f"Requête invalide: {error_msg}"}
 
-            logger.error(f"Erreur non catégorisée ({error_type}): {str(e)}")
-            return {"error": "Erreur du service de recherche"}
+            return {"error": f"Erreur du service: {error_msg}"}
 
-    def _prepare_search_query(self, query: str) -> List[Dict[str, str]]:
-        """Prépare la requête de recherche avec un prompt système approprié"""
-        system_prompt = """Tu es un assistant de recherche expert qui doit :
-1. Effectuer une recherche approfondie basée sur les mots-clés ou la phrase fournie
-2. Analyser intelligemment l'intention de la recherche, qu'elle soit générale ou spécifique
-3. Fournir des informations précises et vérifiées en français
-4. Ne jamais demander de reformulation, mais plutôt extraire l'essentiel de la requête
-5. Adapter la réponse au type de recherche :
-   - Pour une personne : biographie et impact
-   - Pour un concept : définition et contexte
-   - Pour un sujet d'actualité : derniers développements
-   - Pour une recherche générale : vue d'ensemble
-6. Citer les sources pertinentes"""
+    def _prepare_search_query(self, query: str, time_filter: Optional[str] = None) -> List[Dict[str, str]]:
+        """Prépare la requête de recherche avec un prompt système sophistiqué incluant le filtre temporel"""
+        system_content = """Tu es un assistant qui donne des réponses précises et factuelles en français.
 
-        # Simplifier la requête pour l'API
+Je veux que tu effectues une recherche approfondie """
+
+        # Ajouter des instructions temporelles si un filtre est spécifié
+        if time_filter:
+            if time_filter == 'day':
+                system_content += "en te concentrant uniquement sur les informations des dernières 24 heures. "
+            elif time_filter == 'week':
+                system_content += "en te limitant aux informations de la semaine dernière. "
+            elif time_filter == 'month':
+                system_content += "en te limitant aux informations du mois dernier. "
+            elif time_filter == 'year':
+                system_content += "en te limitant aux informations de l'année en cours. "
+            elif time_filter == 'custom':
+                system_content += "en te concentrant sur la période spécifique mentionnée dans la requête. "
+
+        system_content += """
+
+Ton rôle est de :
+1. Comprendre la requête et identifier les points clés
+2. Effectuer une recherche approfondie sur ces points
+3. Fournir une réponse factuelle et sourcée
+4. Citer systématiquement tes sources
+
+Format de réponse souhaité :
+- Information principale
+- Détails pertinents
+- Sources utilisées (avec URLs)"""
+
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query}  # Envoi direct de la requête sans préfixe
+            {
+                "role": "system",
+                "content": system_content
+            },
+            {
+                "role": "user",
+                "content": query
+            }
         ]
-
-        logger.info(f"Messages préparés pour la recherche: {messages}")
         return messages
 
-    async def search(self, query: str) -> Dict[str, str]:
-        """Effectue une recherche avec l'API Perplexity"""
+    async def search(self, query: str) -> Dict[str, Any]:
+        """Effectue une recherche avec l'API Perplexity avec gestion du temps"""
         try:
-            # Nettoyer la requête
             clean_query = query.strip()
             if not clean_query:
-                logger.warning("Requête vide reçue")
                 return {"error": "La requête ne peut pas être vide"}
 
-            # Préparer et envoyer la requête
-            messages = self._prepare_search_query(clean_query)
-            logger.info(f"Démarrage de la recherche pour: {clean_query}")
+            # Détecter si un filtre temporel est nécessaire
+            time_filter = self._detect_time_filter(clean_query)
+            logger.info(f"Filtre temporel détecté: {time_filter}")
 
-            response = await self._make_request(messages)
-            logger.debug(f"Réponse reçue: {response}")
+            messages = self._prepare_search_query(clean_query, time_filter)
+            logger.info(f"Recherche pour: {clean_query}")
 
-            if "error" in response:
-                logger.warning(f"Erreur retournée: {response['error']}")
-                return response
+            result = await self._make_request(messages)
 
-            content = response.get("content")
-            if not content:
-                logger.error("Contenu de la réponse vide")
-                return {"error": "Aucune information trouvée"}
+            if "error" in result:
+                return result
 
-            logger.info("Recherche terminée avec succès")
-            return {"response": content}
+            return {
+                "response": result["response"],
+                "sources": result["sources"]
+            }
 
         except Exception as e:
-            logger.error(f"Erreur inattendue lors de la recherche: {str(e)}")
+            logger.error(f"Erreur dans la méthode search: {e}")
             return {"error": "Une erreur inattendue est survenue"}
 
     async def _make_request_with_retries(self, messages: list, max_retries: int = 2) -> Dict[Any, Any]:
@@ -145,7 +232,7 @@ class PerplexityClient:
            - Les URLs directes des images (commençant par http/https)
            - Les URLs des pages contenant ces images
         4. Pour chaque image, décrire brièvement son contenu
-        
+
         Format de réponse :
         [URL_IMAGE]|[URL_PAGE]|[DESCRIPTION]
         (une ligne par image)
@@ -280,3 +367,6 @@ class PerplexityClient:
         except Exception as e:
             logger.error(f"Erreur lors de la recherche YouTube: {str(e)}")
             return []
+
+import httpx
+import re
