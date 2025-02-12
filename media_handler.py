@@ -22,7 +22,7 @@ class MediaHandler:
         self.target_size = 1600  # px
 
         # Domaines autorisés pour les images
-        self.allowed_domains = {'pinterest.com', 'pinimg.com', 'imgur.com', 'i.imgur.com'}
+        self.allowed_domains = {'zerochan.net', 'pinterest.com', 'pinimg.com'}
 
     async def download_image(self, url: str) -> Optional[str]:
         """Télécharge et traite une image"""
@@ -36,7 +36,7 @@ class MediaHandler:
                 return None
 
             # Télécharger l'image
-            async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.get(url)
                 response.raise_for_status()
 
@@ -74,6 +74,8 @@ class MediaHandler:
                     save_opts = {'quality': 85, 'optimize': True}
                 elif format_name == 'PNG':
                     save_opts = {'optimize': True}
+                else:
+                    save_opts = {}
 
                 img.save(temp_path, format=format_name, **save_opts)
 
