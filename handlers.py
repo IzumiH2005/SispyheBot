@@ -353,31 +353,62 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Envoyer les images
+        # Envoyer les images avec une meilleure gestion des erreurs
         await progress_message.edit_text(
             "*présente sa sélection* Voici ce que j'ai trouvé :",
             parse_mode='Markdown'
         )
 
         successful_sends = 0
+        max_retries_send = 3
+
         for path in image_paths:
             try:
-                logger.info(f"Tentative d'envoi de l'image: {path}")
-                with open(path, 'rb') as f:
-                    await update.message.reply_photo(
-                        photo=f,
-                        caption="*observe l'image avec intérêt*",
-                        parse_mode='Markdown'
-                    )
-                successful_sends += 1
-                logger.info(f"Image envoyée avec succès: {path}")
+                if not os.path.exists(path) or not os.path.getsize(path) > 0:
+                    logger.error(f"Fichier invalide ou vide: {path}")
+                    continue
+
+                for attempt in range(max_retries_send):
+                    try:
+                        logger.info(f"Tentative {attempt + 1} d'envoi de l'image: {path}")
+
+                        # Vérifier la taille du fichier
+                        file_size = os.path.getsize(path)
+                        if file_size > 10 * 1024 * 1024:  # 10MB
+                            logger.warning(f"Image trop grande pour Telegram: {file_size / 1024 / 1024:.2f}MB")
+                            break
+
+                        with open(path, 'rb') as f:
+                            await update.message.reply_photo(
+                                photo=f,
+                                caption="*observe l'image avec intérêt*",
+                                parse_mode='Markdown'
+                            )
+                        successful_sends += 1
+                        logger.info(f"Image envoyée avec succès: {path}")
+                        break  # Sortir de la boucle si l'envoi réussit
+
+                    except TelegramError as te:
+                        logger.error(f"Erreur Telegram lors de l'envoi de l'image {path} (tentative {attempt + 1}): {te}")
+                        if attempt < max_retries_send - 1:
+                            await asyncio.sleep(1)  # Délai avant la prochaine tentative
+                        else:
+                            logger.error(f"Échec de toutes les tentatives d'envoi pour {path}")
+
             except Exception as e:
-                logger.error(f"Erreur lors de l'envoi de l'image {path}: {e}")
+                logger.error(f"Erreur lors du traitement de l'image {path}: {e}")
+                logger.exception("Détails de l'erreur:")
                 continue
 
+        # Résumé des résultats
         if successful_sends == 0:
             await update.message.reply_text(
                 "*semble déçu* Je n'ai pas pu envoyer les images.",
+                parse_mode='Markdown'
+            )
+        elif successful_sends < len(image_paths):
+            await update.message.reply_text(
+                f"*ajuste ses lunettes* J'ai pu envoyer {successful_sends} image{'s' if successful_sends > 1 else ''} sur {len(image_paths)}.",
                 parse_mode='Markdown'
             )
 
@@ -503,7 +534,7 @@ async def handle_callback(update: Update, context: CallbackContext):
                     )
                     return
 
-                await progress_msg.edit_text(
+                await progress_msg.edit_message_text(
                     "*prépare l'envoi* Fichier téléchargé, vérification de la taille...",
                     parse_mode='Markdown'
                 )
@@ -596,15 +627,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message.chat.type in ['group', 'supergroup']:
             # Vérifier si le message est une réponse à un message de Sisyphe
             is_reply_to_bot = (
-                update.message.reply_to_message and 
+                update.message.reply_to_message and
                 update.message.reply_to_message.from_user.id == context.bot.id
             )
 
             # Vérifier si Sisyphe est mentionné
             bot_username = context.bot.username
             mentions_bot = (
-                f"@{bot_username}" in message_text or 
-                "Sisyphe" in message_text or 
+                f"@{bot_username}" in message_text or
+                "Sisyphe" in message_text or
                 "sisyphe" in message_text
             )
 
@@ -713,74 +744,25 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 disable_web_page_preview=True
             )
 
-            # Amélioration de la gestion des images et tentative de récupération d'image alternative
-            max_attempts = 3
-            image_sent = False
-
-            for attempt in range(max_attempts):
+            # Gestion des images améliorée
+            if image_url:
                 try:
-                    if image_url:
-                        logger.info(f"Tentative {attempt + 1}: Téléchargement de l'image de couverture: {image_url}")
-                        image_paths = await media_handler.download_images([image_url])
+                    logger.info(f"Téléchargement de l'image de couverture: {image_url}")
+                    image_paths = await media_handler.download_images([image_url])
 
-                        if image_paths and len(image_paths) > 0:
-                            image_path = image_paths[0]
-                            try:
-                                with open(image_path, 'rb') as f:
-                                    await update.message.reply_photo(
-                                        photo=f,
-                                        caption="*présente la couverture avec élégance*",
-                                        parse_mode='Markdown'
-                                    )
-                                image_sent = True
-                                break
-                            except Exception as photo_error:
-                                logger.error(f"Erreur lors de l'envoi de la photo: {photo_error}")
-
-                    if not image_sent:
-                        # Essayer de trouver une image alternative
-                        logger.info(f"Tentative {attempt + 1}: Recherche d'une image alternative")
-                        scraper = StartpageImageScraper()
-                        search_queries = [
-                            f"{titre} anime cover official",
-                            f"{titre} anime poster",
-                            f"{titre} anime key visual"
-                        ]
-
-                        for query in search_queries:
-                            alt_image_urls = await scraper.search_images(query, max_results=1)
-                            if alt_image_urls:
-                                alt_image_paths = await media_handler.download_images(alt_image_urls)
-                                if alt_image_paths and len(alt_image_paths) > 0:
-                                    with open(alt_image_paths[0], 'rb') as f:
-                                        await update.message.reply_photo(
-                                            photo=f,
-                                            caption="*partage une illustration représentative*",
-                                            parse_mode='Markdown'
-                                        )
-                                    image_sent = True
-                                    break
-
-                            if image_sent:
-                                break
-
-                        if image_sent:
-                            break
-
-                    if not image_sent and attempt < max_attempts - 1:
-                        await asyncio.sleep(1)  # Petit délai entre les tentatives
-
-                except Exception as e:
-                    logger.error(f"Erreur lors du traitement de l'image (tentative {attempt + 1}): {e}")
-                    if attempt == max_attempts - 1:
-                        logger.exception("Détails de l'erreur pour l'image:")
-                finally:
-                    # Nettoyer les fichiers temporaires après chaque tentative
-                    media_handler.cleanup()
-                    logger.info("Nettoyage des fichiers temporaires effectué")
-
-            if not image_sent:
-                logger.warning("Impossible de trouver ou d'envoyer une image de couverture")
+                    if image_paths and len(image_paths) > 0:
+                        image_path = image_paths[0]
+                        try:
+                            with open(image_path, 'rb') as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    caption="*présente la couverture avec élégance*",
+                                    parse_mode='Markdown'
+                                )
+                        except Exception as photo_error:
+                            logger.error(f"Erreur lors de l'envoi de la photo: {photo_error}")
+                except Exception as image_error:
+                    logger.error(f"Erreur lors du traitement de l'image: {image_error}")
 
         except asyncio.TimeoutError:
             logger.error("Timeout lors de la création de la fiche")
@@ -798,3 +780,8 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await progress_message.edit_text(error_message, parse_mode='Markdown')
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
+
+    finally:
+        # Nettoyer les fichiers temporaires si nécessaire
+        if 'image_paths' in locals():
+            media_handler.cleanup()

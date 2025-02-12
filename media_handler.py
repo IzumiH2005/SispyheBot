@@ -13,64 +13,93 @@ logger = logging.getLogger(__name__)
 
 class MediaHandler:
     def __init__(self):
-        """Initialise le gestionnaire de médias avec des dossiers temporaires dédiés"""
-        self.base_temp_dir = tempfile.mkdtemp(prefix='sisyphe_media_')
-        self.images_dir = os.path.join(self.base_temp_dir, 'images')
-        self.videos_dir = os.path.join(self.base_temp_dir, 'videos')
-        self.audio_dir = os.path.join(self.base_temp_dir, 'audio')
+        """Initialise les répertoires temporaires pour les médias"""
+        self.temp_dir = tempfile.mkdtemp(prefix='sisyphe_media_')
+        self.images_dir = os.path.join(self.temp_dir, 'images')
+        self.videos_dir = os.path.join(self.temp_dir, 'videos')
+        self.audio_dir = os.path.join(self.temp_dir, 'audio')
 
-        # Créer les sous-dossiers
+        # Créer les sous-répertoires s'ils n'existent pas
         os.makedirs(self.images_dir, exist_ok=True)
         os.makedirs(self.videos_dir, exist_ok=True)
         os.makedirs(self.audio_dir, exist_ok=True)
+        logger.info(f"Répertoires temporaires créés: {self.temp_dir}")
+        logger.debug(f"Répertoire images: {self.images_dir}")
+        logger.debug(f"Répertoire videos: {self.videos_dir}")
+        logger.debug(f"Répertoire audio: {self.audio_dir}")
+
+        # Vérifier les permissions
+        if not os.access(self.images_dir, os.W_OK):
+            logger.error(f"Pas de permission d'écriture sur {self.images_dir}")
+        if not os.access(self.videos_dir, os.W_OK):
+            logger.error(f"Pas de permission d'écriture sur {self.videos_dir}")
+        if not os.access(self.audio_dir, os.W_OK):
+            logger.error(f"Pas de permission d'écriture sur {self.audio_dir}")
 
         self.last_youtube_request = 0
-        logger.info(f"Dossiers temporaires créés dans: {self.base_temp_dir}")
+        logger.info(f"Dossiers temporaires créés dans: {self.temp_dir}")
+
 
     async def download_image(self, url: str) -> Optional[str]:
         """Télécharge une image depuis une URL avec des vérifications améliorées"""
         try:
+            # Validation basique de l'URL
+            if not url or not isinstance(url, str):
+                logger.error(f"URL invalide: {url}")
+                return None
+
+            # Vérifier que l'URL commence par http:// ou https:// et a un domaine valide
+            if not url.startswith(('http://', 'https://')) or len(url.split('/')) < 3:
+                logger.error(f"Format d'URL invalide: {url}")
+                return None
+
             logger.info(f"Tentative de téléchargement de l'image: {url}")
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-
-                # Vérifier le type de contenu
-                content_type = response.headers.get('content-type', '').lower()
-                logger.info(f"Type de contenu détecté: {content_type}")
-
-                if not any(mime in content_type for mime in ['image/jpeg', 'image/png', 'image/gif', 'image/webp']):
-                    logger.warning(f"Type de contenu non supporté: {content_type}")
+                try:
+                    logger.debug(f"Envoi de la requête GET à {url}")
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    logger.debug(f"Réponse reçue avec statut: {response.status_code}")
+                except httpx.ConnectError as e:
+                    logger.error(f"Erreur de connexion pour {url}: {e}")
+                    return None
+                except httpx.HTTPError as e:
+                    logger.error(f"Erreur HTTP pour {url}: {e}")
                     return None
 
                 # Vérifier la taille avant de télécharger (limite à 10MB)
                 content_length = len(response.content)
+                logger.debug(f"Taille du contenu: {content_length / 1024 / 1024:.2f}MB")
                 if content_length > 10 * 1024 * 1024:  # 10MB
                     logger.warning(f"Image trop grande: {content_length / 1024 / 1024:.2f}MB")
                     return None
 
-                # Déterminer l'extension
-                ext_map = {
-                    'image/jpeg': 'jpg',
-                    'image/png': 'png',
-                    'image/gif': 'gif',
-                    'image/webp': 'webp'
-                }
-                ext = ext_map.get(content_type, 'jpg')
-
                 # Créer un nom de fichier unique
-                temp_path = os.path.join(self.images_dir, f"image_{os.urandom(8).hex()}.{ext}")
+                filename = f"image_{os.urandom(8).hex()}"
+                temp_path = os.path.join(self.images_dir, filename)
+                logger.debug(f"Chemin du fichier temporaire: {temp_path}")
 
-                # Sauvegarder l'image
-                with open(temp_path, 'wb') as f:
-                    f.write(response.content)
+                try:
+                    # Sauvegarder l'image
+                    with open(temp_path, 'wb') as f:
+                        f.write(response.content)
+                    logger.info(f"Image téléchargée avec succès: {temp_path}")
 
-                logger.info(f"Image téléchargée avec succès: {temp_path}")
-                return temp_path
+                    # Vérifier que le fichier existe et est accessible
+                    if not os.path.exists(temp_path):
+                        logger.error(f"Le fichier n'existe pas après l'écriture: {temp_path}")
+                        return None
+                    if not os.path.getsize(temp_path) > 0:
+                        logger.error(f"Le fichier est vide après l'écriture: {temp_path}")
+                        return None
+
+                    return temp_path
+                except IOError as e:
+                    logger.error(f"Erreur lors de l'écriture du fichier {temp_path}: {e}")
+                    return None
 
         except Exception as e:
             logger.error(f"Erreur lors du téléchargement de {url}: {e}")
-            logger.exception("Détails de l'erreur:")
             return None
 
     async def download_youtube_video(self, url: str, format_type: str = 'mp4', max_size_mb: int = 75) -> Optional[str]:
@@ -278,7 +307,7 @@ class MediaHandler:
                     logger.info(f"Dossier temporaire supprimé: {specific_path}")
             else:
                 # Nettoyer tous les dossiers temporaires
-                shutil.rmtree(self.base_temp_dir, ignore_errors=True)
+                shutil.rmtree(self.temp_dir, ignore_errors=True)
                 # Recréer les dossiers de base
                 os.makedirs(self.images_dir, exist_ok=True)
                 os.makedirs(self.videos_dir, exist_ok=True)
