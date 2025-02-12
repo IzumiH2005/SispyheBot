@@ -1,3 +1,4 @@
+<replit_final_file>
 import os
 import asyncio
 import logging
@@ -14,94 +15,202 @@ logger = logging.getLogger(__name__)
 class MediaHandler:
     def __init__(self):
         """Initialise les répertoires temporaires pour les médias"""
+        # Créer un dossier temporaire principal avec un nom unique
         self.temp_dir = tempfile.mkdtemp(prefix='sisyphe_media_')
+
+        # Créer des sous-dossiers spécifiques
         self.images_dir = os.path.join(self.temp_dir, 'images')
         self.videos_dir = os.path.join(self.temp_dir, 'videos')
         self.audio_dir = os.path.join(self.temp_dir, 'audio')
 
-        # Créer les sous-répertoires s'ils n'existent pas
-        os.makedirs(self.images_dir, exist_ok=True)
-        os.makedirs(self.videos_dir, exist_ok=True)
-        os.makedirs(self.audio_dir, exist_ok=True)
-        logger.info(f"Répertoires temporaires créés: {self.temp_dir}")
-        logger.debug(f"Répertoire images: {self.images_dir}")
-        logger.debug(f"Répertoire videos: {self.videos_dir}")
-        logger.debug(f"Répertoire audio: {self.audio_dir}")
+        # Créer tous les sous-dossiers
+        for directory in [self.images_dir, self.videos_dir, self.audio_dir]:
+            os.makedirs(directory, exist_ok=True)
+            # S'assurer que les permissions sont correctes (lecture et écriture)
+            os.chmod(directory, 0o755)
+
+        logger.info(f"Dossiers temporaires créés dans: {self.temp_dir}")
+        logger.debug(f"Dossier images: {self.images_dir}")
+        logger.debug(f"Dossier vidéos: {self.videos_dir}")
+        logger.debug(f"Dossier audio: {self.audio_dir}")
 
         # Vérifier les permissions
-        if not os.access(self.images_dir, os.W_OK):
-            logger.error(f"Pas de permission d'écriture sur {self.images_dir}")
-        if not os.access(self.videos_dir, os.W_OK):
-            logger.error(f"Pas de permission d'écriture sur {self.videos_dir}")
-        if not os.access(self.audio_dir, os.W_OK):
-            logger.error(f"Pas de permission d'écriture sur {self.audio_dir}")
+        for directory in [self.images_dir, self.videos_dir, self.audio_dir]:
+            if not os.access(directory, os.W_OK):
+                logger.error(f"Pas de permission d'écriture sur {directory}")
+            if not os.access(directory, os.R_OK):
+                logger.error(f"Pas de permission de lecture sur {directory}")
 
         self.last_youtube_request = 0
-        logger.info(f"Dossiers temporaires créés dans: {self.temp_dir}")
-
 
     async def download_image(self, url: str) -> Optional[str]:
-        """Télécharge une image depuis une URL avec des vérifications améliorées"""
+        """Télécharge une image depuis une URL avec une meilleure gestion des fichiers temporaires"""
         try:
-            # Validation basique de l'URL
             if not url or not isinstance(url, str):
                 logger.error(f"URL invalide: {url}")
                 return None
 
-            # Vérifier que l'URL commence par http:// ou https:// et a un domaine valide
-            if not url.startswith(('http://', 'https://')) or len(url.split('/')) < 3:
+            if not url.startswith(('http://', 'https://')):
                 logger.error(f"Format d'URL invalide: {url}")
                 return None
 
-            logger.info(f"Tentative de téléchargement de l'image: {url}")
+            logger.info(f"Téléchargement de l'image depuis: {url}")
+
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 try:
-                    logger.debug(f"Envoi de la requête GET à {url}")
                     response = await client.get(url)
                     response.raise_for_status()
-                    logger.debug(f"Réponse reçue avec statut: {response.status_code}")
-                except httpx.ConnectError as e:
-                    logger.error(f"Erreur de connexion pour {url}: {e}")
-                    return None
+                    logger.debug(f"Statut de la réponse: {response.status_code}")
                 except httpx.HTTPError as e:
-                    logger.error(f"Erreur HTTP pour {url}: {e}")
+                    logger.error(f"Erreur HTTP lors du téléchargement: {e}")
                     return None
 
-                # Vérifier la taille avant de télécharger (limite à 10MB)
-                content_length = len(response.content)
-                logger.debug(f"Taille du contenu: {content_length / 1024 / 1024:.2f}MB")
-                if content_length > 10 * 1024 * 1024:  # 10MB
-                    logger.warning(f"Image trop grande: {content_length / 1024 / 1024:.2f}MB")
+                # Vérifier le content-type
+                content_type = response.headers.get('content-type', '').lower()
+                if not content_type.startswith('image/'):
+                    logger.error(f"Content-type non valide: {content_type}")
                     return None
 
-                # Créer un nom de fichier unique
-                filename = f"image_{os.urandom(8).hex()}"
+                # Créer un nom de fichier unique avec l'extension appropriée
+                extension = content_type.split('/')[-1].split(';')[0]
+                if not extension or extension not in ['jpeg', 'jpg', 'png', 'gif', 'webp']:
+                    extension = 'jpg'  # Extension par défaut
+                filename = f"image_{os.urandom(8).hex()}.{extension}"
                 temp_path = os.path.join(self.images_dir, filename)
-                logger.debug(f"Chemin du fichier temporaire: {temp_path}")
+
+                logger.debug(f"Sauvegarde de l'image dans: {temp_path}")
 
                 try:
-                    # Sauvegarder l'image
+                    # Écrire le fichier
                     with open(temp_path, 'wb') as f:
                         f.write(response.content)
-                    logger.info(f"Image téléchargée avec succès: {temp_path}")
 
-                    # Vérifier que le fichier existe et est accessible
+                    # S'assurer que les permissions sont correctes
+                    os.chmod(temp_path, 0o644)
+
+                    # Vérifications post-téléchargement
                     if not os.path.exists(temp_path):
-                        logger.error(f"Le fichier n'existe pas après l'écriture: {temp_path}")
-                        return None
-                    if not os.path.getsize(temp_path) > 0:
-                        logger.error(f"Le fichier est vide après l'écriture: {temp_path}")
+                        logger.error("Le fichier n'a pas été créé")
                         return None
 
+                    file_size = os.path.getsize(temp_path)
+                    logger.debug(f"Taille du fichier téléchargé: {file_size/1024:.1f}KB")
+
+                    if file_size == 0:
+                        logger.error("Le fichier téléchargé est vide")
+                        os.remove(temp_path)
+                        return None
+
+                    if file_size > 10 * 1024 * 1024:  # 10MB
+                        logger.error(f"Fichier trop volumineux: {file_size/1024/1024:.2f}MB")
+                        os.remove(temp_path)
+                        return None
+
+                    # Vérifier que le fichier est bien une image valide
+                    try:
+                        with open(temp_path, 'rb') as f:
+                            magic_number = f.read(4)
+                            if not any(magic_number.startswith(sig) for sig in [
+                                b'\xFF\xD8\xFF',  # JPEG
+                                b'\x89PNG',       # PNG
+                                b'GIF8',          # GIF
+                                b'RIFF'           # WEBP
+                            ]):
+                                logger.error("Format de fichier non valide")
+                                os.remove(temp_path)
+                                return None
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la vérification du format: {e}")
+                        os.remove(temp_path)
+                        return None
+
+                    logger.info(f"Image téléchargée avec succès: {temp_path} ({file_size/1024:.1f}KB)")
                     return temp_path
+
                 except IOError as e:
-                    logger.error(f"Erreur lors de l'écriture du fichier {temp_path}: {e}")
+                    logger.error(f"Erreur lors de l'écriture du fichier: {e}")
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
                     return None
 
         except Exception as e:
-            logger.error(f"Erreur lors du téléchargement de {url}: {e}")
+            logger.error(f"Erreur inattendue lors du téléchargement: {e}")
             return None
 
+    def cleanup(self, specific_path: Optional[str] = None):
+        """Nettoie les fichiers temporaires"""
+        try:
+            if specific_path and os.path.exists(specific_path):
+                # Nettoyer un fichier ou dossier spécifique
+                try:
+                    if os.path.isfile(specific_path):
+                        os.remove(specific_path)
+                        logger.info(f"Fichier supprimé: {specific_path}")
+                    else:
+                        shutil.rmtree(specific_path, ignore_errors=True)
+                        logger.info(f"Dossier supprimé: {specific_path}")
+                except Exception as e:
+                    logger.error(f"Erreur lors de la suppression de {specific_path}: {e}")
+            else:
+                # Nettoyer tous les dossiers temporaires
+                cleaned_files = 0
+                for dir_path in [self.images_dir, self.videos_dir, self.audio_dir]:
+                    if os.path.exists(dir_path):
+                        for filename in os.listdir(dir_path):
+                            file_path = os.path.join(dir_path, filename)
+                            try:
+                                if os.path.isfile(file_path):
+                                    os.remove(file_path)
+                                    cleaned_files += 1
+                                    logger.debug(f"Fichier supprimé: {file_path}")
+                                else:
+                                    shutil.rmtree(file_path)
+                                    cleaned_files += 1
+                                    logger.debug(f"Dossier supprimé: {file_path}")
+                            except Exception as e:
+                                logger.error(f"Erreur lors de la suppression de {file_path}: {e}")
+                logger.info(f"Nettoyage terminé: {cleaned_files} fichiers/dossiers supprimés")
+        except Exception as e:
+            logger.error(f"Erreur lors du nettoyage: {e}")
+
+    async def download_images(self, urls: List[str]) -> List[str]:
+        """Télécharge plusieurs images en parallèle avec une meilleure gestion des erreurs"""
+        if not urls:
+            logger.warning("Aucune URL fournie")
+            return []
+
+        # Filtrer les URLs invalides
+        valid_urls = [url for url in urls if url and isinstance(url, str) and url.startswith(('http://', 'https://'))]
+        if not valid_urls:
+            logger.warning("Aucune URL valide trouvée")
+            return []
+
+        logger.info(f"Début du téléchargement de {len(valid_urls)} images")
+
+        # Limiter les téléchargements simultanés
+        semaphore = asyncio.Semaphore(3)
+
+        async def download_with_semaphore(url: str) -> Optional[str]:
+            async with semaphore:
+                return await self.download_image(url)
+
+        # Télécharger toutes les images
+        tasks = [download_with_semaphore(url) for url in valid_urls]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Filtrer les résultats valides
+        valid_paths = []
+        for path in results:
+            if isinstance(path, str) and os.path.exists(path):
+                file_size = os.path.getsize(path)
+                logger.debug(f"Image valide: {path} ({file_size/1024:.1f}KB)")
+                valid_paths.append(path)
+            elif isinstance(path, Exception):
+                logger.error(f"Erreur lors du téléchargement: {path}")
+
+        logger.info(f"Téléchargement terminé: {len(valid_paths)}/{len(urls)} images réussies")
+        return valid_paths
+    
     async def download_youtube_video(self, url: str, format_type: str = 'mp4', max_size_mb: int = 75) -> Optional[str]:
         """Télécharge une vidéo YouTube dans le format spécifié avec gestion améliorée"""
         try:
@@ -197,7 +306,6 @@ class MediaHandler:
                     if 'filename' in locals() and os.path.exists(filename):
                         os.remove(filename)
                     raise
-
         except Exception as e:
             logger.error(f"Erreur lors du téléchargement de la vidéo {url}: {e}")
             logger.exception("Détails de l'erreur:")
@@ -205,39 +313,6 @@ class MediaHandler:
             if 'output_dir' in locals():
                 shutil.rmtree(output_dir, ignore_errors=True)
             return None
-
-    async def download_images(self, urls: List[str]) -> List[str]:
-        """Télécharge plusieurs images en parallèle avec une limite de concurrence et meilleure gestion des erreurs"""
-        # Limiter le nombre de téléchargements simultanés à 3 pour éviter la surcharge
-        semaphore = asyncio.Semaphore(3)
-
-        async def download_with_semaphore(url):
-            try:
-                async with semaphore:
-                    return await self.download_image(url)
-            except Exception as e:
-                logger.error(f"Erreur lors du téléchargement de {url}: {e}")
-                return None
-
-        # Filtrer les URLs invalides
-        valid_urls = [url for url in urls if url and isinstance(url, str) and url.startswith(('http://', 'https://'))]
-
-        if not valid_urls:
-            logger.warning("Aucune URL valide fournie pour le téléchargement")
-            return []
-
-        tasks = [download_with_semaphore(url) for url in valid_urls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Filtrer les résultats pour ne garder que les chemins valides
-        successful_downloads = [path for path in results if path and isinstance(path, str) and os.path.exists(path)]
-
-        if not successful_downloads:
-            logger.warning("Aucune image n'a pu être téléchargée avec succès")
-        else:
-            logger.info(f"Téléchargement réussi de {len(successful_downloads)} images sur {len(urls)} tentatives")
-
-        return successful_downloads
 
     async def search_youtube(self, query: str) -> List[Dict[str, str]]:
         """Recherche des vidéos YouTube avec gestion améliorée du rate limiting"""
@@ -291,28 +366,3 @@ class MediaHandler:
             logger.error(f"Erreur lors de la recherche YouTube: {e}")
             logger.exception("Détails de l'erreur:")
             return []
-
-    def cleanup(self, specific_path: Optional[str] = None):
-        """Nettoie les fichiers temporaires
-        Args:
-            specific_path: Chemin spécifique à nettoyer. Si None, nettoie tous les dossiers temporaires.
-        """
-        try:
-            if specific_path and os.path.exists(specific_path):
-                if os.path.isfile(specific_path):
-                    os.remove(specific_path)
-                    logger.info(f"Fichier temporaire supprimé: {specific_path}")
-                else:
-                    shutil.rmtree(specific_path, ignore_errors=True)
-                    logger.info(f"Dossier temporaire supprimé: {specific_path}")
-            else:
-                # Nettoyer tous les dossiers temporaires
-                shutil.rmtree(self.temp_dir, ignore_errors=True)
-                # Recréer les dossiers de base
-                os.makedirs(self.images_dir, exist_ok=True)
-                os.makedirs(self.videos_dir, exist_ok=True)
-                os.makedirs(self.audio_dir, exist_ok=True)
-                logger.info("Nettoyage complet des fichiers temporaires effectué")
-        except Exception as e:
-            logger.error(f"Erreur lors du nettoyage des fichiers temporaires: {e}")
-            logger.exception("Détails de l'erreur:")
