@@ -162,7 +162,7 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 timeout=25.0
             )
 
-            if "error" in result:
+            if isinstance(result, dict) and "error" in result:
                 error_msg = result["error"]
                 logger.error(f"Erreur retournée par l'API: {error_msg}")
                 if "quota" in error_msg.lower():
@@ -189,42 +189,85 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-            # Structuration sophistiquée avec Gemini
-            context_message = f"""Tu es un assistant sophistiqué qui doit organiser et présenter ces informations en français de manière claire et structurée.
+            # Détecter si la recherche concerne un anime/film/série
+            media_keywords = ['anime', 'série', 'film', 'movie', 'tv show', 'season', 'épisode', 'saison']
+            is_media_search = any(keyword in query.lower() for keyword in media_keywords)
+
+            # Message à envoyer à Gemini pour le formatage
+            if is_media_search:
+                context_message = f"""Tu es un assistant sophistiqué qui doit créer une fiche détaillée pour ce contenu média.
+
+Information brute à organiser :
+{response_text}
+
+Format exact à utiliser :
+
+┌───────────────────────────────────────────────┐
+│               ✦ [TITRE] ✦                    │
+│              *[TITRE EN JAPONAIS]*            │
+└───────────────────────────────────────────────┘
+
+◈ **Type** : [Type]  
+◈ **Créateur** : [Créateur]  
+◈ **Studio** : [Studio]  
+◈ **Année** : [Année]  
+◈ **Genres** : [Genres]  
+◈ **Épisodes** : [Nombre d'épisodes]  
+◈ **Univers** : [Description de l'univers]  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
+✦ **SYNOPSIS** ✦  
+▪ [Résumé du synopsis]  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
+✦ **PERSONNAGES PRINCIPAUX** ✦  
+🔹 **[Nom du personnage]** – [Description]  
+🔹 **[Nom du personnage]** – [Description]  
+🔹 **[Nom du personnage]** – [Description]  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
+✦ **THÈMES MAJEURS** ✦  
+◈ [Thème 1]  
+◈ [Thème 2]  
+◈ [Thème 3]  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
+✦ **ADAPTATIONS & ŒUVRES ANNEXES** ✦  
+▪ [Manga/Anime/etc.]  
+▪ [Manga/Anime/etc.]  
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  
+✦ **LIENS & RÉFÉRENCES** ✦  
+{chr(10).join([f"🔗 {source}" for source in sources])}
+
+Instructions de formatage :
+1. Utilise exactement ce format avec les mêmes caractères spéciaux et emojis
+2. Remplace les crochets par les informations appropriées
+3. Conserve la mise en forme Markdown (**, *, etc.)
+4. Laisse les sections vides si l'information n'est pas disponible
+5. Ajoute les sources à la fin dans la section LIENS & RÉFÉRENCES"""
+            else:
+                context_message = f"""Tu es un assistant sophistiqué qui doit synthétiser et organiser ces informations en français de manière claire et engageante.
 
 Information brute à organiser :
 {response_text}
 
 Instructions de formatage :
-1. Crée un titre principal pertinent
-2. Organise le contenu en sections logiques avec des sous-titres
-3. Utilise des listes à puces pour les points importants
-4. Mets en valeur les informations clés avec *italique* ou **gras**
-5. Ajoute une section "Sources" à la fin
-6. Utilise le format Markdown pour la mise en forme
+1. Crée une introduction qui capte l'attention
+2. Organise le contenu en paragraphes cohérents
+3. Utilise des transitions naturelles entre les idées
+4. Mets en valeur les informations clés en *italique* ou **gras**
+5. Ajoute des sous-titres si nécessaire
+6. Termine par une conclusion qui résume les points importants
+7. Ajoute les sources en bas comme une bibliographie
 
-Sources à citer dans la bibliographie :
-{chr(10).join([f"- {source}" for source in sources])}
-
-Le format final doit ressembler à :
-
-*Titre Principal*
-
-**Section 1**
-• Point important
-• Autre point
-
-**Section 2**
-[...]
-
-*Sources consultées :*
-[Liste numérotée des sources]"""
+Sources à citer :
+{chr(10).join([f"- {source}" for source in sources])}"""
 
             logger.info("Envoi à Gemini pour formatage")
             formatted_response = await sisyphe.get_response(context_message)
             logger.info("Réponse reçue de Gemini")
 
-            # Vérification du formatage
             if not formatted_response or not formatted_response.strip():
                 logger.warning("Réponse vide de Gemini, utilisation du format par défaut")
                 formatted_response = f"""*Résultat de la recherche*
@@ -232,9 +275,9 @@ Le format final doit ressembler à :
 {response_text}
 
 *Sources consultées :*
-{chr(10).join([f"{i+1}. {source}" for i, source in enumerate(sources)])}"""
+{chr(10).join([f"- {source}" for source in sources])}"""
 
-            logger.info("Réponse formatée et envoyée avec succès")
+            # Envoi de la réponse formatée
             await progress_message.edit_text(
                 formatted_response,
                 parse_mode='Markdown',
@@ -431,7 +474,12 @@ async def handle_callback(update: Update, context: CallbackContext):
                         size_mb = file_size / (1024 * 1024)
 
                         if size_mb > 50:  # 50MB
-                            raise TelegramError(f"File is too big ({size_mb:.1f}MB)")
+                            error_msg = f"Le fichier est trop volumineux pour Telegram ({size_mb:.1f}MB > 50MB). Essayez une vidéo plus courte."
+                            await progress_msg.edit_text(
+                                f"*semble désolé* {error_msg}",
+                                parse_mode='Markdown'
+                            )
+                            return
 
                         if format_type == 'mp3':
                             await query.message.reply_audio(
@@ -453,13 +501,9 @@ async def handle_callback(update: Update, context: CallbackContext):
                     )
 
                 except TelegramError as te:
-                    if "File is too big" in str(te):
-                        error_msg = f"Le fichier est trop volumineux pour Telegram ({size_mb:.1f}MB > 50MB). Essayez une vidéo plus courte."
-                    else:
-                        error_msg = "Impossible d'envoyer le fichier. Essayez une autre vidéo."
-
+                    logger.error(f"Erreur Telegram lors de l'envoi du fichier: {te}")
                     await progress_msg.edit_text(
-                        f"*semble désolé* {error_msg}",
+                        "*semble désolé* Impossible d'envoyer le fichier. Essayez une autre vidéo.",
                         parse_mode='Markdown'
                     )
 

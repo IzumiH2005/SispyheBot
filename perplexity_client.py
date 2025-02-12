@@ -194,7 +194,7 @@ Format de réponse souhaité :
         return messages
 
     async def search(self, query: str) -> Dict[str, Any]:
-        """Effectue une recherche avec l'API Perplexity avec gestion du temps"""
+        """Effectue une recherche avec l'API Perplexity"""
         try:
             clean_query = query.strip()
             if not clean_query:
@@ -202,10 +202,45 @@ Format de réponse souhaité :
 
             logger.info(f"Recherche pour: {clean_query}")
 
+            # Détecter si c'est une recherche de média
+            media_keywords = ['anime', 'série', 'film', 'movie', 'tv show', 'season', 'épisode', 'saison']
+            is_media_search = any(keyword in clean_query.lower() for keyword in media_keywords)
+
+            # Configuration du prompt selon le type de recherche
+            if is_media_search:
+                logger.info("Recherche de média détectée")
+                system_content = """Tu es un assistant spécialisé dans les contenus média.
+                Pour chaque anime/film/série, recherche et organise les informations suivantes :
+
+                1. Titre complet et titre original/japonais
+                2. Type de média exact (anime, film, série TV, OVA, etc.)
+                3. Créateur(s) et équipe de production
+                4. Studio d'animation/Production
+                5. Année et période de diffusion
+                6. Genres principaux
+                7. Nombre d'épisodes/durée
+                8. Description de l'univers
+                9. Synopsis complet
+                10. Personnages principaux
+                11. Thèmes majeurs
+                12. Adaptations et œuvres dérivées
+
+                Fournis toutes les informations disponibles et vérifie leur exactitude.
+                Cite systématiquement tes sources."""
+            else:
+                logger.info("Recherche générale détectée")
+                system_content = """Tu es un assistant de recherche en français.
+                Fournis une réponse :
+                1. Claire et factuelle
+                2. Bien structurée
+                3. Avec des sources vérifiées
+
+                Cite systématiquement tes sources."""
+
             messages = [
                 {
                     "role": "system",
-                    "content": "Tu es un assistant qui répond toujours en français avec précision et concision."
+                    "content": system_content
                 },
                 {
                     "role": "user",
@@ -213,18 +248,14 @@ Format de réponse souhaité :
                 }
             ]
 
-            request_kwargs = {
-                "model": "sonar-pro",
-                "messages": messages,
-                "temperature": 0.2,
-                "top_p": 0.9,
-                "stream": False
-            }
-
             logger.info("Envoi de la requête à l'API Perplexity...")
             response = await asyncio.to_thread(
                 self.client.chat.completions.create,
-                **request_kwargs
+                model="sonar-pro",
+                messages=messages,
+                temperature=0.2,
+                top_p=0.9,
+                stream=False
             )
 
             logger.info(f"Réponse reçue du modèle: {response.model}")
@@ -240,7 +271,7 @@ Format de réponse souhaité :
                 logger.info("Extraction des URLs depuis le contenu")
                 urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', content)
                 citations = [url for url in urls if url.startswith('http')]
-                logger.info(f"URLs extraites: {len(citations)}")
+                logger.info(f"Nombre d'URLs extraites: {len(citations)}")
 
             return {
                 "response": content,
@@ -250,6 +281,7 @@ Format de réponse souhaité :
         except Exception as e:
             error_msg = str(e)
             logger.error(f"Erreur dans la méthode search: {error_msg}")
+            logger.exception("Détails complets de l'erreur:")
 
             if "quota" in error_msg.lower():
                 return {"error": "Limite de requêtes atteinte"}
