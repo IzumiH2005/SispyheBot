@@ -1,12 +1,14 @@
-import os
 import httpx
 import logging
-from typing import List, Dict, Any, Optional
+import os
+import re
+from typing import List, Dict, Any, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
 class PerplexityClient:
     def __init__(self):
+        """Initialise le client Perplexity avec la clé API"""
         self.api_key = os.getenv('PERPLEXITY_API_KEY')
         if not self.api_key:
             raise ValueError("PERPLEXITY_API_KEY non trouvée dans les variables d'environnement")
@@ -17,90 +19,102 @@ class PerplexityClient:
             "Content-Type": "application/json"
         }
 
-    async def _make_request(self, messages: List[Dict[str, str]], model: str = "sonar-pro") -> Dict[Any, Any]:
-        """Fait une requête à l'API Perplexity avec une meilleure gestion des erreurs"""
+    async def _make_request(self, messages: list, model: str = "sonar-medium-online") -> Dict[Any, Any]:
+        """Fait une requête optimisée à l'API Perplexity"""
         url = f"{self.base_url}/chat/completions"
-
-        # Extraire la requête du dernier message utilisateur
-        query = next((msg["content"] for msg in reversed(messages) if msg["role"] == "user"), "")
-        logger.info(f"Requête à envoyer: {query}")
 
         data = {
             "model": model,
             "messages": messages,
-            "max_tokens": 2048,
+            "max_tokens": 1024,
             "temperature": 0.7,
             "top_p": 0.9,
             "stream": False,
-            "presence_penalty": 0,
-            "frequency_penalty": 0,
-            "search_domain_filter": [],  # Aucun filtre de domaine pour une recherche plus large
-            "return_images": False,
-            "return_related_questions": True,
-            "search_recency_filter": "month"  # Pour avoir des informations récentes
+            "presence_penalty": 0.0,
+            "frequency_penalty": 0.0
         }
 
-        logger.info(f"Envoi de la requête à {url}")
-
         try:
+            logger.info(f"Envoi de la requête à Perplexity avec le modèle {model}")
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(url, headers=self.headers, json=data)
+
+                if response.status_code == 400:
+                    error_text = response.text
+                    logger.error(f"Erreur 400 de l'API Perplexity: {error_text}")
+                    return {"error": "La recherche n'a pas pu aboutir, essayez de reformuler votre question"}
+
+                if response.status_code != 200:
+                    logger.error(f"Erreur {response.status_code} de l'API: {response.text}")
+                    return {"error": "Un problème est survenu avec le service de recherche"}
+
                 response.raise_for_status()
                 return response.json()
 
+        except httpx.TimeoutException:
+            logger.error("Timeout de la requête Perplexity")
+            return {"error": "La recherche a pris trop de temps, veuillez réessayer"}
         except Exception as e:
             logger.error(f"Erreur lors de la requête Perplexity: {e}")
-            raise
+            if "quota" in str(e).lower():
+                return {"error": "Limite de requêtes atteinte, veuillez réessayer plus tard"}
+            return {"error": "Une erreur est survenue lors de la recherche"}
 
-    async def search(self, query: str, context: Optional[str] = None) -> Dict[str, str]:
-        """Effectue une recherche améliorée avec l'API Perplexity"""
-        system_prompt = """Tu es Sisyphe, un érudit stoïque. Dans tes réponses :
-
-1. Exprime-toi naturellement, comme dans une vraie conversation
-2. Formule des phrases complètes mais concises
-3. Synthétise l'information en 1-2 paragraphes
-4. Expose clairement ton point de vue critique
-5. Utilise des analogies simples pour les concepts complexes
-6. Reste stoïque et peu expressif
-7. Traduis tout en français
-
-Exemple de réponse :
-"Le stoïcisme est un bon exercice mental, mais il a ses limites. L'idée de contrôler totalement ses réactions est séduisante mais illusoire - notre comportement est dicté par des facteurs biologiques qu'aucune volonté ne peut totalement maîtriser."
-
-À éviter :
-- Les citations
-- Les structures formelles (introduction/conclusion)
-- Les marqueurs mécaniques (premièrement, ensuite, etc.)
-- Les réponses fragmentées"""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query}
-        ]
-
-        if context:
-            messages[1]["content"] += f"\nContexte additionnel : {context}"
-
+    async def search(self, query: str) -> Dict[str, str]:
+        """Effectue une recherche avec l'API Perplexity"""
         try:
+            # Nettoyer et formater la requête
+            clean_query = query.strip()
+            if not clean_query:
+                return {"error": "La requête ne peut pas être vide"}
+
+            system_prompt = """Tu es un assistant de recherche expert qui :
+1. Répond de manière factuelle et directe
+2. Se concentre sur les informations vérifiées et pertinentes
+3. Structure la réponse de manière claire et concise
+4. Cite ses sources quand c'est possible
+5. Traduit toujours la réponse en français
+
+Pour une recherche sur une personne :
+- Commence par les informations essentielles (dates, nationalité, domaine)
+- Mentionne les réalisations principales
+- Ajoute un fait intéressant ou une citation notable
+
+Format de réponse :
+1. Présentation en 2-3 phrases
+2. Points clés si nécessaire (max 3)
+3. Sources en fin de réponse
+
+Reste factuel et précis."""
+
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Recherche détaillée sur : {clean_query}"}
+            ]
+
+            logger.info(f"Démarrage de la recherche pour: {clean_query}")
             response = await self._make_request(messages)
+
+            if "error" in response:
+                logger.warning(f"Erreur retournée: {response['error']}")
+                return response
 
             if "choices" not in response or not response["choices"]:
                 logger.error("Réponse invalide de l'API Perplexity")
                 return {"error": "Format de réponse invalide"}
 
-            formatted_response = response["choices"][0]["message"]["content"]
+            formatted_response = response["choices"][0]["message"]["content"].strip()
 
-            # Sources ajoutées discrètement si présentes
-            if "citations" in response:
-                sources = response.get("citations", [])
-                if sources:
-                    formatted_response += "\n\n[Sources consultées]"
+            # Vérifier que la réponse n'est pas vide
+            if not formatted_response:
+                return {"error": "Aucune information trouvée"}
 
+            logger.info("Recherche terminée avec succès")
             return {"response": formatted_response}
 
         except Exception as e:
             logger.error(f"Erreur lors de la recherche: {e}")
-            return {"error": f"Une erreur est survenue lors de la recherche : {str(e)}"}
+            return {"error": "Une erreur inattendue est survenue"}
 
     async def search_images(self, query: str, site: str) -> List[str]:
         """Recherche améliorée d'images sur différentes plateformes"""
@@ -249,5 +263,3 @@ Exemple de réponse :
         except Exception as e:
             logger.error(f"Erreur lors de la recherche YouTube: {e}")
             return []
-
-import re

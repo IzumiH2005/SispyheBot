@@ -98,16 +98,17 @@ class MediaHandler:
             # Options spécifiques au format
             if format_type == 'mp3':
                 ydl_opts.update({
-                    'format': 'bestaudio/best',
+                    'format': 'worstaudio/worst',  # Prend la qualité audio la plus basse
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
                         'preferredcodec': 'mp3',
-                        'preferredquality': '192',
+                        'preferredquality': '64',  # Réduit encore plus la qualité à 64kbps
                     }],
                 })
             else:  # mp4
                 ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4][filesize<75M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<75M]/best[filesize<75M]',
+                    # Essaie d'abord 240p, puis 360p si non disponible, puis la plus basse qualité
+                    'format': 'worst[height<=240][ext=mp4]/worst[height<=360][ext=mp4]/worst[ext=mp4]',
                     'merge_output_format': 'mp4',
                 })
 
@@ -121,39 +122,52 @@ class MediaHandler:
             self.last_youtube_request = time.time()
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Extraire les informations avant le téléchargement
-                info = ydl.extract_info(url, download=False)
-                logger.info(f"Informations vidéo extraites: {info.get('title')}")
+                try:
+                    # Extraire les informations avant le téléchargement
+                    info = ydl.extract_info(url, download=False)
+                    logger.info(f"Informations vidéo extraites: {info.get('title')}")
 
-                # Vérifier la taille estimée si disponible
-                filesize = info.get('filesize') or info.get('filesize_approx')
-                if filesize and filesize > max_size_mb * 1024 * 1024:
-                    size_mb = filesize / (1024 * 1024)
-                    raise Exception(f"Fichier trop volumineux ({size_mb:.1f}MB > {max_size_mb}MB)")
+                    # Vérifier la taille estimée si disponible
+                    filesize = info.get('filesize') or info.get('filesize_approx')
+                    if filesize:
+                        size_mb = filesize / (1024 * 1024)
+                        logger.info(f"Taille estimée du fichier: {size_mb:.1f}MB")
+                        if size_mb > max_size_mb:
+                            raise Exception(f"Fichier trop volumineux ({size_mb:.1f}MB > {max_size_mb}MB)")
 
-                # Télécharger la vidéo
-                info = ydl.extract_info(url, download=True)
-                filename = ydl.prepare_filename(info)
+                    # Télécharger la vidéo
+                    info = ydl.extract_info(url, download=True)
+                    filename = ydl.prepare_filename(info)
 
-                # Ajuster l'extension si nécessaire
-                if format_type == 'mp3':
-                    filename = filename.rsplit('.', 1)[0] + '.mp3'
-                elif not filename.endswith('.mp4'):
-                    filename = filename.rsplit('.', 1)[0] + '.mp4'
+                    # Ajuster l'extension si nécessaire
+                    if format_type == 'mp3':
+                        filename = filename.rsplit('.', 1)[0] + '.mp3'
+                    elif not filename.endswith('.mp4'):
+                        filename = filename.rsplit('.', 1)[0] + '.mp4'
 
-                logger.info(f"Téléchargement réussi: {filename}")
+                    logger.info(f"Téléchargement réussi: {filename}")
 
-                # Vérifier si le fichier existe et sa taille
-                if not os.path.exists(filename):
-                    raise Exception("Le fichier n'a pas été créé")
+                    # Vérifier si le fichier existe et sa taille
+                    if not os.path.exists(filename):
+                        raise Exception("Le fichier n'a pas été créé")
 
-                actual_size = os.path.getsize(filename)
-                if actual_size > max_size_mb * 1024 * 1024:
-                    # Nettoyer le dossier spécifique avant de lever l'exception
-                    shutil.rmtree(output_dir, ignore_errors=True)
-                    raise Exception(f"Fichier final trop volumineux: {actual_size / (1024 * 1024):.1f}MB")
+                    actual_size = os.path.getsize(filename)
+                    actual_size_mb = actual_size / (1024 * 1024)
+                    logger.info(f"Taille réelle du fichier: {actual_size_mb:.1f}MB")
 
-                return filename
+                    if actual_size > max_size_mb * 1024 * 1024:
+                        # Nettoyer le fichier avant de lever l'exception
+                        os.remove(filename)
+                        raise Exception(f"Fichier final trop volumineux: {actual_size_mb:.1f}MB")
+
+                    return filename
+
+                except Exception as e:
+                    logger.error(f"Erreur lors du téléchargement/traitement: {e}")
+                    # Nettoyer en cas d'erreur
+                    if 'filename' in locals() and os.path.exists(filename):
+                        os.remove(filename)
+                    raise
 
         except Exception as e:
             logger.error(f"Erreur lors du téléchargement de la vidéo {url}: {e}")
