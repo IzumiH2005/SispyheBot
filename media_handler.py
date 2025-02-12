@@ -73,7 +73,7 @@ class MediaHandler:
             logger.exception("Détails de l'erreur:")
             return None
 
-    async def download_youtube_video(self, url: str, format_type: str = 'mp4', max_size_mb: int = 70) -> Optional[str]:
+    async def download_youtube_video(self, url: str, format_type: str = 'mp4', max_size_mb: int = 75) -> Optional[str]:
         """Télécharge une vidéo YouTube dans le format spécifié avec gestion améliorée"""
         try:
             output_dir = self.audio_dir if format_type == 'mp3' else self.videos_dir
@@ -87,7 +87,7 @@ class MediaHandler:
                 'writethumbnail': False,
                 'writeinfojson': False,
                 'ffmpeg_location': 'ffmpeg',
-                'max_filesize': max_size_mb * 1024 * 1024,  # Limite à 70MB
+                'max_filesize': max_size_mb * 1024 * 1024,  # Limite à 75MB
             }
 
             # Options spécifiques au format
@@ -102,7 +102,7 @@ class MediaHandler:
                 })
             else:  # mp4
                 ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best[ext=mp4][height<=720]/best[ext=mp4]',
+                    'format': 'bestvideo[ext=mp4][filesize<75M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<75M]/best[ext=mp4]',
                     'merge_output_format': 'mp4',
                 })
 
@@ -121,9 +121,10 @@ class MediaHandler:
                 logger.info(f"Informations vidéo extraites: {info.get('title')}")
 
                 # Vérifier la taille estimée si disponible
-                filesize = info.get('filesize') or info.get('filesize_approx')
+                filesize = info.get('filesize')
                 if filesize and filesize > max_size_mb * 1024 * 1024:
-                    raise Exception(f"Fichier trop volumineux: {filesize / 1024 / 1024:.2f}MB")
+                    size_mb = filesize / (1024 * 1024)
+                    raise Exception(f"Fichier trop volumineux ({size_mb:.1f}MB > {max_size_mb}MB)")
 
                 # Télécharger la vidéo
                 info = ydl.extract_info(url, download=True)
@@ -142,6 +143,13 @@ class MediaHandler:
                 if os.path.getsize(filename) == 0:
                     os.remove(filename)
                     raise Exception("Le fichier téléchargé est vide")
+
+                # Vérifier la taille finale du fichier
+                final_size = os.path.getsize(filename)
+                if final_size > max_size_mb * 1024 * 1024:
+                    os.remove(filename)
+                    size_mb = final_size / (1024 * 1024)
+                    raise Exception(f"Le fichier final est trop volumineux ({size_mb:.1f}MB > {max_size_mb}MB)")
 
                 logger.info(f"Téléchargement réussi: {filename}")
                 return filename
@@ -176,7 +184,7 @@ class MediaHandler:
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'extract_flat': True,
+                'extract_flat': 'in_playlist',
                 'default_search': 'ytsearch5'
             }
 
@@ -187,18 +195,29 @@ class MediaHandler:
                 if 'entries' in results:
                     for entry in results['entries'][:5]:
                         if entry:
-                            duration = entry.get('duration', 0)
-                            minutes = duration // 60
-                            seconds = duration % 60
+                            try:
+                                duration = int(float(entry.get('duration', 0)))
+                                minutes = duration // 60
+                                seconds = duration % 60
+                                duration_str = f"{minutes}:{seconds:02d}"
+                            except (ValueError, TypeError):
+                                duration_str = "??:??"
+
+                            # S'assurer que l'URL est valide
+                            url = entry.get('url') or entry.get('webpage_url', '')
+                            if not url.startswith('http'):
+                                video_id = entry.get('id', '')
+                                url = f"https://www.youtube.com/watch?v={video_id}"
 
                             videos.append({
-                                'title': entry.get('title', ''),
-                                'url': entry.get('webpage_url', ''),
+                                'title': entry.get('title', 'Sans titre'),
+                                'url': url,
                                 'duration': duration,
-                                'duration_str': f"{minutes}:{seconds:02d}",
+                                'duration_str': duration_str,
                                 'thumbnail': entry.get('thumbnail', '')
                             })
 
+                logger.info(f"Recherche YouTube réussie: {len(videos)} vidéos trouvées")
                 return videos
 
         except Exception as e:

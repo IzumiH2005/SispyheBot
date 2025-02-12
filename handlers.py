@@ -223,28 +223,31 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 title = title[:32] + "..."
 
             # Ajouter la durée si disponible
-            if video.get('duration'):
-                duration = int(video['duration'])  # Convert to int for division
-                minutes = duration // 60
-                seconds = duration % 60
-                title = f"{title} ({minutes}:{seconds:02d})"
+            if 'duration_str' in video:
+                title = f"{title} ({video['duration_str']})"
 
-            callback_data = f"yt_{i}_{video['url']}"
-            if len(callback_data) > 64:  # Limite Telegram pour callback_data
-                video_id = video['url'].split('watch?v=')[-1].split('&')[0]
-                callback_data = f"yt_{i}_{video_id}"
+            # Créer un callback_data sécurisé
+            video_id = video['url'].split('watch?v=')[-1].split('&')[0]
+            callback_data = f"yt_{i}_{video_id}"
             keyboard.append([InlineKeyboardButton(title, callback_data=callback_data)])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
+
+        # Créer un message de réponse détaillé
+        message = "*consulte son catalogue* Voici les vidéos trouvées :\n\n"
+        for i, video in enumerate(videos, 1):
+            duration = video.get('duration_str', 'Durée inconnue')
+            message += f"{i}. {video['title']} ({duration})\n"
+
         await update.message.reply_text(
-            "*consulte son catalogue* Voici les vidéos trouvées :\n\n" + 
-            "\n".join([f"• {video['title']}" for video in videos]),
+            message,
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
 
     except Exception as e:
         logger.error(f"Erreur dans yt_command: {e}")
+        logger.exception("Détails de l'erreur:")
         await update.message.reply_text("*semble troublé* Je ne peux pas rechercher de vidéos pour le moment.")
 
 async def handle_callback(update: Update, context: CallbackContext):
@@ -254,23 +257,18 @@ async def handle_callback(update: Update, context: CallbackContext):
         await query.answer()
 
         if query.data.startswith('yt_'):
-            # Format: yt_index_url
+            # Format: yt_index_video_id
             parts = query.data.split('_', 2)
             if len(parts) != 3:
                 raise ValueError("Format de callback incorrect")
 
-            _, index, url_or_id = parts
-
-            # Reconstruire l'URL complète si nécessaire
-            if not url_or_id.startswith('http'):
-                url = f"https://www.youtube.com/watch?v={url_or_id}"
-            else:
-                url = url_or_id
+            _, index, video_id = parts
+            url = f"https://www.youtube.com/watch?v={video_id}"
 
             # Demander le format
             keyboard = [
-                [InlineKeyboardButton("MP3 (Audio)", callback_data=f"format_mp3_{url}")],
-                [InlineKeyboardButton("MP4 (Vidéo)", callback_data=f"format_mp4_{url}")]
+                [InlineKeyboardButton("MP3 (Audio)", callback_data=f"format_mp3_{video_id}")],
+                [InlineKeyboardButton("MP4 (Vidéo)", callback_data=f"format_mp4_{video_id}")]
             ]
             await query.edit_message_text(
                 "*réfléchit* Dans quel format souhaites-tu cette vidéo ?",
@@ -279,16 +277,16 @@ async def handle_callback(update: Update, context: CallbackContext):
             )
 
         elif query.data.startswith('format_'):
-            # Format: format_type_url
+            # Format: format_type_video_id
             parts = query.data.split('_', 2)
             if len(parts) != 3:
                 raise ValueError("Format de callback incorrect")
 
-            _, format_type, url = parts
-
+            _, format_type, video_id = parts
             if format_type not in ['mp3', 'mp4']:
                 raise ValueError("Format non supporté")
 
+            url = f"https://www.youtube.com/watch?v={video_id}"
             await query.edit_message_text("*commence le téléchargement* Un moment...")
 
             # Télécharger la vidéo
