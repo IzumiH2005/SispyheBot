@@ -2,126 +2,110 @@ import os
 import asyncio
 import logging
 import httpx
-from typing import List, Dict, Optional, Tuple
+from typing import List, Optional
 import tempfile
-import shutil
 import time
-import mimetypes
+from PIL import Image
+import io
 
 logger = logging.getLogger(__name__)
 
 class MediaHandler:
     def __init__(self):
-        """Initialise les répertoires temporaires pour les médias"""
+        """Initialise le gestionnaire de médias"""
         self.temp_dir = tempfile.mkdtemp(prefix='sisyphe_media_')
+        logger.info(f"[DEBUG] Dossier temporaire créé: {self.temp_dir}")
 
-        # Créer des sous-dossiers spécifiques
-        self.images_dir = os.path.join(self.temp_dir, 'images')
-        os.makedirs(self.images_dir, exist_ok=True)
-        os.chmod(self.images_dir, 0o755)
-
-        logger.info(f"Dossiers temporaires créés dans: {self.temp_dir}")
+        # Formats supportés
+        self.supported_formats = {'JPEG', 'JPG', 'PNG', 'GIF', 'WEBP'}
+        self.max_size = 5 * 1024 * 1024  # 5MB
+        self.target_size = 1600  # px
 
     async def download_image(self, url: str) -> Optional[str]:
-        """Télécharge une image depuis une URL avec plus de vérifications"""
+        """Télécharge et traite une image"""
         try:
-            if not url or not isinstance(url, str):
-                logger.warning("URL invalide")
-                return None
+            logger.info(f"[DEBUG] Téléchargement depuis: {url}")
 
-            if not url.startswith(('http://', 'https://')):
-                logger.warning(f"Protocole non supporté: {url}")
-                return None
-
-            logger.info(f"Tentative de téléchargement depuis: {url}")
-
+            # Télécharger l'image
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                # Vérifier d'abord les en-têtes
-                head_response = await client.head(url)
-                content_type = head_response.headers.get('content-type', '').lower()
-                content_length = int(head_response.headers.get('content-length', 0))
-
-                # Vérification du type MIME
-                if not content_type.startswith('image/'):
-                    logger.warning(f"Type de contenu non supporté: {content_type}")
-                    return None
-
-                # Vérification de la taille avant téléchargement
-                if content_length > 5 * 1024 * 1024:  # 5MB
-                    logger.warning(f"Fichier trop volumineux: {content_length/1024/1024:.2f}MB")
-                    return None
-
-                # Téléchargement du contenu
                 response = await client.get(url)
                 response.raise_for_status()
 
-                # Vérification finale du type MIME
-                extension = mimetypes.guess_extension(content_type) or '.jpg'
-                if extension not in ['.jpg', '.jpeg', '.png', '.gif', '.webp']:
-                    logger.warning(f"Extension non supportée: {extension}")
+                # Créer l'objet Image
+                img = Image.open(io.BytesIO(response.content))
+
+                # Vérifier le format
+                if not img.format:
+                    logger.warning("[DEBUG] Format non détecté")
                     return None
 
-                # Génération du nom de fichier unique
-                filename = f"image_{int(time.time())}_{os.urandom(4).hex()}{extension}"
-                temp_path = os.path.join(self.images_dir, filename)
+                format_name = img.format.upper()
+                if format_name not in self.supported_formats:
+                    if format_name == 'WEBP':
+                        img = img.convert('RGB')
+                        format_name = 'JPEG'
+                    else:
+                        logger.warning(f"[DEBUG] Format non supporté: {format_name}")
+                        return None
 
-                # Écriture du fichier
-                with open(temp_path, 'wb') as f:
-                    f.write(response.content)
+                # Redimensionner si nécessaire
+                if max(img.size) > self.target_size:
+                    ratio = self.target_size / max(img.size)
+                    new_size = tuple(int(dim * ratio) for dim in img.size)
+                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                    logger.info(f"[DEBUG] Redimensionné à: {new_size}")
 
-                logger.info(f"Image téléchargée avec succès: {temp_path}")
+                # Sauvegarder l'image
+                ext = '.jpg' if format_name == 'JPEG' else f'.{format_name.lower()}'
+                temp_path = os.path.join(self.temp_dir, f"img_{int(time.time())}_{os.urandom(4).hex()}{ext}")
+
+                # Optimiser selon le format
+                save_opts = {'quality': 85, 'optimize': True} if format_name in ('JPEG', 'JPG') else {'optimize': True}
+                img.save(temp_path, format=format_name, **save_opts)
+
+                # Vérifier la taille finale
+                if os.path.getsize(temp_path) > self.max_size:
+                    logger.warning("[DEBUG] Image trop volumineuse après optimisation")
+                    os.remove(temp_path)
+                    return None
+
+                logger.info(f"[DEBUG] Image sauvegardée: {temp_path}")
                 return temp_path
 
-        except httpx.HTTPError as e:
-            logger.error(f"Erreur HTTP lors du téléchargement: {e}")
-            return None
         except Exception as e:
-            logger.error(f"Erreur lors du téléchargement: {e}")
+            logger.error(f"[DEBUG] Erreur téléchargement: {str(e)}")
             return None
 
     async def download_images(self, urls: List[str]) -> List[str]:
-        """Télécharge plusieurs images en parallèle avec gestion d'erreurs améliorée"""
+        """Télécharge plusieurs images"""
         if not urls:
-            logger.warning("Aucune URL fournie pour le téléchargement")
             return []
-
-        valid_urls = [url for url in urls if url and isinstance(url, str) and 
-                     url.startswith(('http://', 'https://'))]
-
-        if not valid_urls:
-            logger.warning("Aucune URL valide trouvée")
-            return []
-
-        logger.info(f"Début du téléchargement de {len(valid_urls)} images")
-        tasks = [self.download_image(url) for url in valid_urls]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         valid_paths = []
-        for i, result in enumerate(results):
-            if isinstance(result, str) and os.path.exists(result):
-                valid_paths.append(result)
-            else:
-                logger.error(f"Échec du téléchargement pour l'URL {valid_urls[i]}: {result}")
+        for url in urls:
+            try:
+                if path := await self.download_image(url):
+                    valid_paths.append(path)
+                await asyncio.sleep(0.5)  # Délai entre les téléchargements
+            except Exception as e:
+                logger.error(f"[DEBUG] Erreur: {str(e)}")
+                continue
 
-        logger.info(f"Téléchargement terminé. {len(valid_paths)}/{len(valid_urls)} images réussies")
         return valid_paths
 
     def cleanup(self, specific_path: Optional[str] = None):
-        """Nettoie les fichiers temporaires avec plus de logs"""
+        """Nettoie les fichiers temporaires"""
         try:
             if specific_path and os.path.exists(specific_path):
-                logger.info(f"Nettoyage du fichier spécifique: {specific_path}")
                 os.remove(specific_path)
-                logger.info("Fichier supprimé avec succès")
-            else:
-                logger.info(f"Nettoyage du répertoire temporaire: {self.temp_dir}")
-                for root, dirs, files in os.walk(self.temp_dir):
-                    for file in files:
-                        try:
-                            file_path = os.path.join(root, file)
-                            os.remove(file_path)
-                            logger.info(f"Fichier supprimé: {file_path}")
-                        except Exception as e:
-                            logger.error(f"Erreur lors de la suppression de {file_path}: {e}")
+                logger.info(f"[DEBUG] Supprimé: {specific_path}")
+            elif os.path.exists(self.temp_dir):
+                for file in os.listdir(self.temp_dir):
+                    try:
+                        path = os.path.join(self.temp_dir, file)
+                        if os.path.isfile(path):
+                            os.remove(path)
+                    except Exception as e:
+                        logger.error(f"[DEBUG] Erreur nettoyage {path}: {str(e)}")
         except Exception as e:
-            logger.error(f"Erreur lors du nettoyage: {e}")
+            logger.error(f"[DEBUG] Erreur nettoyage: {str(e)}")

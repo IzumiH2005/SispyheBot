@@ -316,78 +316,110 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Recherche d'images
         scraper = StartpageImageScraper()
-        logger.info("Début de la recherche avec StartpageImageScraper")
+        logger.info(f"[DEBUG] Début de la recherche avec StartpageImageScraper pour query: {query}")
         image_urls = await scraper.search_images(query, max_results=3)
-        logger.info(f"URLs trouvées: {image_urls}")
+        logger.info(f"[DEBUG] URLs trouvées ({len(image_urls)}): {image_urls}")
 
         if not image_urls:
-            logger.warning("Aucune URL d'image trouvée")
+            logger.warning("[DEBUG] Aucune URL d'image trouvée, arrêt du processus")
             await progress_message.edit_text(
                 "*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.",
                 parse_mode='Markdown'
             )
             return
 
-        # Traiter chaque image individuellement
-        for idx, url in enumerate(image_urls, 1):
-            try:
-                logger.info(f"Traitement de l'image {idx}/{len(image_urls)}: {url}")
-
-                # Téléchargement
-                image_path = await media_handler.download_image(url)
-                if not image_path:
-                    logger.warning(f"Échec du téléchargement pour l'URL {url}")
-                    continue
-
-                logger.info(f"Image téléchargée vers: {image_path}")
-
-                # Vérifications
-                if not os.path.exists(image_path):
-                    logger.error(f"Le fichier n'existe pas après téléchargement: {image_path}")
-                    continue
-
-                file_size = os.path.getsize(image_path)
-                logger.info(f"Taille du fichier: {file_size/1024:.2f}KB")
-
-                if file_size == 0:
-                    logger.error(f"Fichier vide: {image_path}")
-                    continue
-
-                if file_size > 5 * 1024 * 1024:  # 5MB
-                    logger.warning(f"Fichier trop volumineux ({file_size/1024/1024:.2f}MB): {image_path}")
-                    continue
-
-                # Envoi
-                logger.info(f"Tentative d'envoi de l'image: {image_path}")
-                try:
-                    with open(image_path, 'rb') as photo:
-                        await update.message.reply_photo(
-                            photo=photo,
-                            caption="*observe l'image avec intérêt*",
-                            parse_mode='Markdown'
-                        )
-                    logger.info(f"Image {idx} envoyée avec succès")
-                except TelegramError as te:
-                    logger.error(f"Erreur Telegram lors de l'envoi: {te}")
-                    continue
-                except Exception as e:
-                    logger.error(f"Erreur lors de l'envoi: {e}")
-                    continue
-
-                # Nettoyage immédiat
-                logger.info(f"Nettoyage du fichier: {image_path}")
-                media_handler.cleanup(image_path)
-                await asyncio.sleep(1)  # Délai entre les envois
-
-            except Exception as e:
-                logger.error(f"Erreur lors du traitement de l'image {url}: {e}")
-                continue
-
-        # Message de fin
+        # Télécharger toutes les images d'abord
         await progress_message.edit_text(
-            "*range ses documents* Voici ce que j'ai trouvé.",
+            "*examine les images*\n_Préparation des images..._",
             parse_mode='Markdown'
         )
+
+        image_paths = []
+        for url in image_urls:
+            try:
+                logger.info(f"[DEBUG] Tentative de téléchargement pour URL: {url}")
+                image_path = await media_handler.download_image(url)
+                if image_path and os.path.exists(image_path):
+                    logger.info(f"[DEBUG] Image téléchargée avec succès: {image_path}")
+                    image_paths.append(image_path)
+                else:
+                    logger.warning(f"[DEBUG] Échec du téléchargement pour {url}, path: {image_path}")
+            except Exception as e:
+                logger.error(f"[DEBUG] Erreur lors du téléchargement de {url}: {str(e)}")
+                continue
+
+        if not image_paths:
+            logger.warning("[DEBUG] Aucune image n'a pu être téléchargée")
+            await progress_message.edit_text(
+                "*semble déçu* Je n'ai pas pu télécharger les images.",
+                parse_mode='Markdown'
+            )
+            return
+
+        # Envoyer les images une par une
+        sent_images = 0
+        logger.info(f"[DEBUG] Début de l'envoi des images. Nombre d'images à envoyer: {len(image_paths)}")
+        for image_path in image_paths:
+            try:
+                # Vérifier que le fichier existe et n'est pas vide
+                if not os.path.exists(image_path) or os.path.getsize(image_path) == 0:
+                    logger.error(f"[DEBUG] Fichier invalide ou vide: {image_path}")
+                    continue
+
+                # Vérifier la taille du fichier
+                file_size = os.path.getsize(image_path)
+                logger.info(f"[DEBUG] Taille du fichier {image_path}: {file_size/1024/1024:.1f}MB")
+                if file_size > 5 * 1024 * 1024:  # 5MB
+                    logger.warning(f"[DEBUG] Image trop volumineuse ({file_size/1024/1024:.1f}MB): {image_path}")
+                    continue
+
+                # Envoi avec retry
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        logger.info(f"[DEBUG] Tentative d'envoi {attempt + 1}/{max_retries} pour {image_path}")
+                        with open(image_path, 'rb') as photo:
+                            await update.message.reply_photo(
+                                photo=photo,
+                                caption="*observe l'image avec intérêt*",
+                                parse_mode='Markdown'
+                            )
+                        sent_images += 1
+                        logger.info(f"[DEBUG] Image envoyée avec succès: {image_path}")
+                        break
+                    except TelegramError as te:
+                        logger.error(f"[DEBUG] Erreur Telegram lors de la tentative {attempt + 1}: {str(te)}")
+                        if attempt < max_retries - 1:
+                            logger.warning(f"[DEBUG] Nouvelle tentative dans 1 seconde...")
+                            await asyncio.sleep(1)
+                        else:
+                            logger.error(f"[DEBUG] Échec définitif après {max_retries} tentatives")
+                            raise
+
+            except Exception as e:
+                logger.error(f"[DEBUG] Erreur lors de l'envoi de l'image {image_path}: {str(e)}")
+                continue
+            finally:
+                # Nettoyage des fichiers après chaque envoi
+                try:
+                    if os.path.exists(image_path):
+                        logger.info(f"[DEBUG] Nettoyage du fichier: {image_path}")
+                        media_handler.cleanup(image_path)
+                except Exception as e:
+                    logger.error(f"[DEBUG] Erreur lors du nettoyage de {image_path}: {str(e)}")
+
+        # Message final
+        logger.info(f"[DEBUG] Processus terminé. Images envoyées: {sent_images}/{len(image_paths)}")
+        if sent_images > 0:
+            await progress_message.edit_text(
+                "*range ses documents* Voici ce que j'ai trouvé.",
+                parse_mode='Markdown'
+            )
+        else:
+            await progress_message.edit_text(
+                "*semble déçu* Je n'ai pas pu envoyer les images.",
+                parse_mode='Markdown'
+            )
 
     except Exception as e:
         logger.error(f"Erreur générale dans image_command: {e}", exc_info=True)
@@ -731,7 +763,7 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             with open(image_path, 'rb') as f:
                                 await update.message.reply_photo(
                                     photo=f,
-                                    caption="*présente la couvertureavec élégance*",
+                                    caption="*présente la couverture avec élégance*",
                                     parse_mode='Markdown'
                                 )
                         except Exception as photo_error:
