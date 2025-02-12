@@ -297,7 +297,6 @@ Instructions de formatage :
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /image"""
     progress_message = None
-    temp_files = []  # Pour garder une trace des fichiers à nettoyer
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
@@ -307,7 +306,7 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        logger.info(f"Recherche d'images pour la requête: {query}")
+        logger.info(f"Début de la recherche d'images pour la requête: {query}")
 
         # Message de progression initial
         progress_message = await update.message.reply_text(
@@ -329,25 +328,27 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Préparer l'album d'images
         media_group = []
-        downloaded_paths = []  # Liste temporaire pour les chemins d'images
+        temp_files = []  # Pour garder une trace des fichiers à nettoyer
 
         # Télécharger les images (limité aux 5 premières réussies)
         for url in image_urls:
-            if len(downloaded_paths) >= 5:  # Arrêter après 5 images
+            if len(media_group) >= 5:  # Arrêter après 5 images
                 break
 
             try:
                 image_path = await media_handler.download_image(url)
                 if image_path and os.path.exists(image_path):
-                    downloaded_paths.append(image_path)
-                    temp_files.append(image_path)
-                    logger.info(f"Image téléchargée: {image_path}")
+                    with open(image_path, 'rb') as photo_file:
+                        media_group.append(
+                            InputMediaPhoto(media=InputFile(photo_file))
+                        )
+                        temp_files.append(image_path)
+                    logger.info(f"Image ajoutée à l'album: {image_path}")
             except Exception as e:
                 logger.error(f"Erreur lors du téléchargement de {url}: {str(e)}")
                 continue
 
-        # Vérifier si nous avons des images à envoyer
-        if not downloaded_paths:
+        if not media_group:
             logger.warning("Aucune image n'a pu être préparée pour l'envoi")
             await progress_message.edit_text(
                 "*semble déçu* Je n'ai pas pu préparer les images.",
@@ -355,36 +356,21 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # Préparer le groupe média avec les fichiers ouverts
-        for path in downloaded_paths:
-            try:
-                photo_file = open(path, 'rb')
-                media_group.append(InputMediaPhoto(media=InputFile(photo_file)))
-            except Exception as e:
-                logger.error(f"Erreur lors de la préparation de l'image {path}: {str(e)}")
-                continue
-
         # Envoyer l'album
-        if media_group:
-            try:
-                await update.message.reply_media_group(media=media_group)
-                message_text = (
-                    "*range ses documents* Voici les images que j'ai trouvées "
-                    f"({len(media_group)} image{'s' if len(media_group) > 1 else ''})."
-                )
-                await progress_message.edit_text(
-                    message_text,
-                    parse_mode='Markdown'
-                )
-            except Exception as e:
-                logger.error(f"Erreur lors de l'envoi de l'album: {e}")
-                await progress_message.edit_text(
-                    "*semble troublé* Je n'ai pas pu envoyer les images.",
-                    parse_mode='Markdown'
-                )
-        else:
+        try:
+            await update.message.reply_media_group(media=media_group)
+            message_text = (
+                "*range ses documents* Voici les images que j'ai trouvées "
+                f"({len(media_group)} image{'s' if len(media_group) > 1 else ''})."
+            )
             await progress_message.edit_text(
-                "*semble déçu* Je n'ai pas pu préparer les images correctement.",
+                message_text,
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Erreur lors de l'envoi de l'album: {e}")
+            await progress_message.edit_text(
+                "*semble troublé* Je n'ai pas pu envoyer les images.",
                 parse_mode='Markdown'
             )
 
@@ -395,16 +381,7 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await progress_message.edit_text(error_message, parse_mode='Markdown')
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
-
     finally:
-        # Fermer tous les fichiers ouverts dans media_group
-        for media in media_group:
-            try:
-                if hasattr(media.media, '_file'):
-                    media.media._file.close()
-            except Exception as e:
-                logger.error(f"Erreur lors de la fermeture du fichier: {str(e)}")
-
         # Nettoyage des fichiers temporaires
         for temp_file in temp_files:
             try:
@@ -413,7 +390,6 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.info(f"Fichier nettoyé: {temp_file}")
             except Exception as e:
                 logger.error(f"Erreur lors du nettoyage de {temp_file}: {str(e)}")
-
         media_handler.cleanup()
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
