@@ -5,7 +5,7 @@ import logging
 # Configuration du logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.DEBUG  # Changé en DEBUG pour voir plus de détails
 )
 
 # Chargement des variables d'environnement

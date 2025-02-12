@@ -21,27 +21,38 @@ class PerplexityClient:
 
     async def _make_request(self, messages: List[Dict[str, str]], model: str = "llama-3.1-sonar-small-128k-online") -> Dict[Any, Any]:
         """Fait une requête à l'API Perplexity avec une meilleure gestion des erreurs"""
-        url = f"{self.base_url}/chat/completions"
+        url = f"{self.base_url}/search"
+
+        # Extraire la requête du dernier message utilisateur
+        query = next((msg["content"] for msg in reversed(messages) if msg["role"] == "user"), "")
+        logger.info(f"Requête à envoyer: {query}")
+
         data = {
-            "model": model,
-            "messages": messages,
+            "query": query,
+            "follow_up": True,
             "temperature": 0.7,
-            "top_p": 0.9,
             "max_tokens": 2048,
-            "presence_penalty": 0,  # Désactivé pour éviter le conflit
-            "frequency_penalty": 0.5,
-            "stream": False,
-            "search": True,  # Active la recherche en ligne
-            "search_domain_filter": ["general", "wiki", "arxiv", "news"],  # Élargir les domaines de recherche
-            "search_recency_filter": "month",  # Augmenter la fenêtre de recherche
-            "search_max_results": 10  # Augmenter le nombre de résultats
+            "focus": ["news", "wiki", "arxiv", "web"],
+            "search_depth": "advanced",
+            "context_level": "detailed"
         }
+
+        logger.info(f"Envoi de la requête à {url} avec les données: {data}")
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
+                logger.debug(f"Headers utilisés: {self.headers}")
                 response = await client.post(url, headers=self.headers, json=data)
+                logger.info(f"Code de statut de la réponse: {response.status_code}")
+
+                response_text = response.text
+                logger.info(f"Réponse brute reçue: {response_text[:500]}...")  # Log premiers 500 caractères
+
                 response.raise_for_status()
-                return response.json()
+                response_json = response.json()
+                logger.info(f"Structure de la réponse JSON: {list(response_json.keys())}")
+                return response_json
+
         except httpx.HTTPStatusError as e:
             logger.error(f"Erreur HTTP lors de la requête Perplexity: {e.response.status_code}")
             if e.response.status_code == 400:
@@ -53,14 +64,6 @@ class PerplexityClient:
 
     async def search(self, query: str, context: Optional[str] = None) -> Dict[str, str]:
         """Effectue une recherche améliorée avec l'API Perplexity"""
-        # Détecter si la requête concerne un personnage de fiction
-        fiction_keywords = [
-            'anime', 'manga', 'bungo', 'stray', 'game', 'jeu', 'personnage', 'character',
-            'light novel', 'visual novel', 'série', 'show', 'film', 'movie'
-        ]
-
-        is_fiction_character = any(keyword in query.lower() for keyword in fiction_keywords)
-
         system_prompt = """Tu es Sisyphe, un assistant de recherche érudit. Ta mission est de :
 
 1. Pour TOUTE recherche :
@@ -68,90 +71,54 @@ class PerplexityClient:
    - Reformuler la requête si nécessaire pour plus d'informations
    - Traduire en français tout contenu en anglais
    - Citer les sources utilisées
-   - Ne jamais dire qu'aucun résultat n'a été trouvé, chercher plus largement
-
-2. Pour les personnages fictifs et œuvres :
-   - Identifier l'œuvre d'origine (manga, anime, jeu vidéo, etc.)
-   - Donner le nom complet et les alias du personnage
-   - Décrire son rôle et ses caractéristiques principales
-   - Mentionner ses relations avec les autres personnages
-   - Expliquer son évolution dans l'histoire
-   - Citer des moments clés de son parcours
-   - Utiliser des sources spécialisées (wikis de fans, sites d'anime)
-
-3. Pour les sujets généraux :
-   - Fournir un contexte historique ou théorique
-   - Expliquer les concepts clés
-   - Donner des exemples concrets
-   - Faire des liens avec d'autres domaines
-
-Format de réponse :
-- Commence par la description principale
-- Ajoute des détails pertinents
-- Termine par les sources utilisées
-
-Si la requête semble incomplète, fais une recherche plus large."""
-
-        # Ajouter du contexte spécifique pour les personnages de fiction
-        if is_fiction_character:
-            search_message = f"""Recherche détaillée sur le personnage ou l'élément fictif : {query}
-
-Points à couvrir :
-- Œuvre(s) d'origine
-- Description complète
-- Histoire et développement
-- Relations importantes
-- Moments clés
-- Impact sur l'histoire
-- Réception par les fans
-
-Utilise des sources spécialisées dans les mangas, animes et jeux vidéo."""
-        else:
-            search_message = f"Recherche approfondie sur : {query}"
-
-        if context:
-            search_message += f"\nContexte additionnel : {context}"
+   - Ne jamais dire qu'aucun résultat n'a été trouvé, chercher plus largement"""
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": search_message}
+            {"role": "user", "content": query}
         ]
 
+        if context:
+            messages[1]["content"] += f"\nContexte additionnel : {context}"
+
         try:
+            logger.info(f"Démarrage de la recherche pour la requête: {query}")
             response = await self._make_request(messages)
 
-            if not response or "choices" not in response:
-                logger.error("Réponse invalide de l'API Perplexity")
-                return {"error": "Réponse invalide de l'API"}
+            if not response:
+                logger.error("Réponse vide de l'API Perplexity")
+                return {"error": "Réponse vide de l'API"}
 
-            content = response["choices"][0]["message"]["content"]
+            logger.info(f"Clés disponibles dans la réponse: {list(response.keys())}")
 
-            # Si la première réponse est insuffisante, faire des requêtes supplémentaires
-            if len(content.strip()) < 200:  # Augmenté le seuil minimum
-                retry_queries = [
-                    f"Recherche détaillée et complète sur : {query}",
-                    f"Qui est ou qu'est-ce que {query} ? Description exhaustive.",
-                    f"Information complète sur {query}, incluant contexte et détails.",
-                ]
+            # Vérifier la structure de la réponse
+            if "text" in response:
+                formatted_response = response["text"]
+                logger.info("Utilisation de la clé 'text' pour la réponse")
+            elif "answer" in response:
+                formatted_response = response["answer"]
+                logger.info("Utilisation de la clé 'answer' pour la réponse")
+            elif "choices" in response and response["choices"]:
+                formatted_response = response["choices"][0].get("message", {}).get("content", "")
+                logger.info("Utilisation de la structure choices/message/content pour la réponse")
+            else:
+                logger.error(f"Structure de réponse inattendue: {response}")
+                return {"error": "Format de réponse inattendu"}
 
-                for retry_query in retry_queries:
-                    messages[1]["content"] = retry_query
-                    retry_response = await self._make_request(messages)
-                    new_content = retry_response["choices"][0]["message"]["content"]
-
-                    if len(new_content.strip()) > len(content.strip()):
-                        content = new_content
-                        if "citations" in retry_response:
-                            response["citations"] = retry_response["citations"]
-
-            # Formater la réponse finale
-            formatted_response = content.strip()
-
-            # Ajouter les citations si disponibles
-            if "citations" in response and response["citations"]:
+            # Traitement des sources
+            if "sources" in response and response["sources"]:
+                logger.info(f"Sources trouvées: {len(response['sources'])}")
+                formatted_response += "\n\nSources :\n"
+                formatted_response += "\n".join([
+                    f"- {source.get('title', 'Source')} : {source.get('url', '#')}"
+                    for source in response["sources"]
+                ])
+            elif "citations" in response:
+                logger.info(f"Citations trouvées: {len(response['citations'])}")
                 formatted_response += "\n\nSources :\n"
                 formatted_response += "\n".join([f"- {citation}" for citation in response["citations"]])
 
+            logger.info("Réponse formatée avec succès")
             return {"response": formatted_response}
 
         except Exception as e:
@@ -171,7 +138,7 @@ Utilise des sources spécialisées dans les mangas, animes et jeux vidéo."""
            - Les URLs directes des images (commençant par http/https)
            - Les URLs des pages contenant ces images
         4. Pour chaque image, décrire brièvement son contenu
-        
+
         Format de réponse :
         [URL_IMAGE]|[URL_PAGE]|[DESCRIPTION]
         (une ligne par image)
