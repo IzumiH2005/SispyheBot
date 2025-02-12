@@ -400,21 +400,14 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                             # Lire le fichier en mode binaire
                             with open(path, 'rb') as photo_file:
-                                photo_data = photo_file.read()
-
-                            if not photo_data:
-                                logger.error(f"Données d'image vides pour: {path}")
-                                continue
-
-                            # Envoyer avec InputFile pour plus de contrôle
-                            await update.message.reply_photo(
-                                photo=photo_data,
-                                caption="*observe l'image avec intérêt*",
-                                parse_mode='Markdown'
-                            )
-                            successful_sends += 1
-                            logger.info(f"Image envoyée avec succès: {path}")
-                            break
+                                await update.message.reply_photo(
+                                    photo=photo_file,
+                                    caption="*observe l'image avec intérêt*",
+                                    parse_mode='Markdown'
+                                )
+                                successful_sends += 1
+                                logger.info(f"Image envoyée avec succès: {path}")
+                                break
                         except Exception as e:
                             logger.error(f"Erreur lors de l'envoi (tentative {attempt + 1}): {e}")
                             if attempt == 2:  # Dernière tentative
