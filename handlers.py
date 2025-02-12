@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ContextTypes, CallbackContext
 from telegram.error import TelegramError
 from persona import SisyphePersona
@@ -295,7 +295,7 @@ Instructions de formatage :
             await update.message.reply_text(error_message, parse_mode='Markdown')
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /image avec une meilleure gestion des fichiers temporaires"""
+    """Gère la commande /image avec une approche ultra-simplifiée et logs détaillés"""
     progress_message = None
     try:
         query = ' '.join(context.args) if context.args else None
@@ -306,146 +306,100 @@ async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
+        logger.info(f"Début de la recherche d'images pour la requête: {query}")
+
         # Message de progression initial
         progress_message = await update.message.reply_text(
             "*parcourt sa collection*\n_Recherche d'images en cours..._",
             parse_mode='Markdown'
         )
 
-        # Indiquer que le bot est en train d'écrire
-        await update.message.chat.send_action(action="typing")
-
-        logger.info(f"Recherche d'images pour: {query}")
-
-        # Utiliser le scraper avec retry
-        max_retries = 3
+        # Recherche d'images
         scraper = StartpageImageScraper()
-
-        image_urls = None
-        for attempt in range(max_retries):
-            logger.info(f"Tentative {attempt + 1} de recherche d'images")
-            image_urls = await scraper.search_images(query, max_results=5)
-            if image_urls:
-                break
-            logger.warning(f"Tentative {attempt + 1}/{max_retries} échouée")
-            if attempt < max_retries - 1:
-                await asyncio.sleep(1)
+        logger.info("Début de la recherche avec StartpageImageScraper")
+        image_urls = await scraper.search_images(query, max_results=3)
+        logger.info(f"URLs trouvées: {image_urls}")
 
         if not image_urls:
-            logger.warning(f"Aucune image trouvée pour: {query}")
+            logger.warning("Aucune URL d'image trouvée")
             await progress_message.edit_text(
                 "*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.",
                 parse_mode='Markdown'
             )
             return
 
-        logger.info(f"Nombre d'URLs trouvées: {len(image_urls)}")
-        logger.debug(f"URLs trouvées: {image_urls}")
+        # Traiter chaque image individuellement
+        for idx, url in enumerate(image_urls, 1):
+            try:
+                logger.info(f"Traitement de l'image {idx}/{len(image_urls)}: {url}")
 
-        # Mise à jour du message de progression
+                # Téléchargement
+                image_path = await media_handler.download_image(url)
+                if not image_path:
+                    logger.warning(f"Échec du téléchargement pour l'URL {url}")
+                    continue
+
+                logger.info(f"Image téléchargée vers: {image_path}")
+
+                # Vérifications
+                if not os.path.exists(image_path):
+                    logger.error(f"Le fichier n'existe pas après téléchargement: {image_path}")
+                    continue
+
+                file_size = os.path.getsize(image_path)
+                logger.info(f"Taille du fichier: {file_size/1024:.2f}KB")
+
+                if file_size == 0:
+                    logger.error(f"Fichier vide: {image_path}")
+                    continue
+
+                if file_size > 5 * 1024 * 1024:  # 5MB
+                    logger.warning(f"Fichier trop volumineux ({file_size/1024/1024:.2f}MB): {image_path}")
+                    continue
+
+                # Envoi
+                logger.info(f"Tentative d'envoi de l'image: {image_path}")
+                try:
+                    with open(image_path, 'rb') as photo:
+                        await update.message.reply_photo(
+                            photo=photo,
+                            caption="*observe l'image avec intérêt*",
+                            parse_mode='Markdown'
+                        )
+                    logger.info(f"Image {idx} envoyée avec succès")
+                except TelegramError as te:
+                    logger.error(f"Erreur Telegram lors de l'envoi: {te}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'envoi: {e}")
+                    continue
+
+                # Nettoyage immédiat
+                logger.info(f"Nettoyage du fichier: {image_path}")
+                media_handler.cleanup(image_path)
+                await asyncio.sleep(1)  # Délai entre les envois
+
+            except Exception as e:
+                logger.error(f"Erreur lors du traitement de l'image {url}: {e}")
+                continue
+
+        # Message de fin
         await progress_message.edit_text(
-            "*examine les images*\n_Téléchargement en cours..._",
+            "*range ses documents* Voici ce que j'ai trouvé.",
             parse_mode='Markdown'
         )
 
-        try:
-            # Télécharger les images
-            logger.info("Début du téléchargement des images")
-            image_paths = await media_handler.download_images(image_urls)
-            logger.info(f"Images téléchargées: {len(image_paths)} fichiers")
-            logger.debug(f"Chemins des images: {image_paths}")
-
-            if not image_paths:
-                logger.error("Aucune image n'a pu être téléchargée")
-                await progress_message.edit_text(
-                    "*semble confus* Je n'ai pas pu télécharger les images.",
-                    parse_mode='Markdown'
-                )
-                return
-
-            # Annoncer l'envoi des images
-            await progress_message.edit_text(
-                "*présente sa sélection* Voici ce que j'ai trouvé :",
-                parse_mode='Markdown'
-            )
-
-            # Envoyer chaque image
-            successful_sends = 0
-            for path in image_paths:
-                try:
-                    if not os.path.exists(path):
-                        logger.error(f"Fichier manquant: {path}")
-                        continue
-
-                    # Vérifier les permissions du fichier
-                    if not os.access(path, os.R_OK):
-                        logger.error(f"Pas de permission de lecture sur le fichier: {path}")
-                        continue
-
-                    file_size = os.path.getsize(path)
-                    logger.info(f"Traitement de l'image: {path} ({file_size/1024:.1f}KB)")
-
-                    if file_size == 0:
-                        logger.error(f"Fichier vide: {path}")
-                        continue
-
-                    if file_size > 10 * 1024 * 1024:  # 10MB limite Telegram
-                        logger.warning(f"Image trop grande: {file_size/1024/1024:.1f}MB")
-                        continue
-
-                    # Envoyer l'image avec retry
-                    for attempt in range(3):
-                        try:
-                            logger.info(f"Tentative {attempt + 1} d'envoi de l'image: {path}")
-
-                            # Lire le fichier en mode binaire
-                            with open(path, 'rb') as photo_file:
-                                await update.message.reply_photo(
-                                    photo=photo_file,
-                                    caption="*observe l'image avec intérêt*",
-                                    parse_mode='Markdown'
-                                )
-                                successful_sends += 1
-                                logger.info(f"Image envoyée avec succès: {path}")
-                                break
-                        except Exception as e:
-                            logger.error(f"Erreur lors de l'envoi (tentative {attempt + 1}): {e}")
-                            if attempt == 2:  # Dernière tentative
-                                await update.message.reply_text(
-                                    "*semble désolé* Je n'arrive pas à envoyer cette image.",
-                                    parse_mode='Markdown'
-                                )
-
-                except Exception as e:
-                    logger.error(f"Erreur lors du traitement de {path}: {e}")
-                    continue
-
-            # Rapport final
-            if successful_sends == 0:
-                await update.message.reply_text(
-                    "*semble déçu* Je n'ai pas pu envoyer les images.",
-                    parse_mode='Markdown'
-                )
-            elif successful_sends < len(image_paths):
-                await update.message.reply_text(
-                    f"*ajuste ses lunettes* J'ai pu envoyer {successful_sends} image{'s' if successful_sends > 1 else ''} sur {len(image_paths)}.",
-                    parse_mode='Markdown'
-                )
-
-        finally:
-            # Nettoyer les fichiers temporaires
-            media_handler.cleanup()
-            logger.info("Nettoyage des fichiers temporaires effectué")
-
     except Exception as e:
-        logger.error(f"Erreur dans image_command: {e}")
-        logger.exception("Détails de l'erreur:")
+        logger.error(f"Erreur générale dans image_command: {e}", exc_info=True)
         error_message = "*semble perplexe* Je ne peux pas traiter ces images pour le moment."
-
         if progress_message:
             await progress_message.edit_text(error_message, parse_mode='Markdown')
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
+    finally:
+        # Nettoyage final
+        logger.info("Nettoyage final des ressources")
+        media_handler.cleanup()
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /yt"""
@@ -777,7 +731,7 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             with open(image_path, 'rb') as f:
                                 await update.message.reply_photo(
                                     photo=f,
-                                    caption="*présente la couverture avec élégance*",
+                                    caption="*présente la couvertureavec élégance*",
                                     parse_mode='Markdown'
                                 )
                         except Exception as photo_error:
