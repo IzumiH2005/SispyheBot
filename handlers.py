@@ -471,73 +471,9 @@ async def handle_callback(update: Update, context: CallbackContext):
                     parse_mode='Markdown'
                 )
 
-        elif query.data.startswith('book_'):
-            # Format du callback_data : book_format_index_title_lang
-            parts = query.data.split('_')
-            if len(parts) < 5:
-                raise ValueError("Format de callback incorrect")
-
-            format_type = parts[1]
-            index = int(parts[2])
-            title = '_'.join(parts[3:-1])  # Le titre peut contenir des underscores
-            lang = parts[-1]
-
-            # Message de progression
-            progress_msg = await query.edit_message_text(
-                "*commence le téléchargement*\n_Préparation..._",
-                parse_mode='Markdown'
-            )
-
-            # Récupérer les formats disponibles
-            result = await ebook_client.search_and_download(title, lang)
-            if "success" in result and "formats" in result:
-                formats = result["formats"]
-                if format_type in formats and len(formats[format_type]) > index:
-                    selected_book = formats[format_type][index]
-
-                    # Télécharger le format sélectionné
-                    download_result = await ebook_client.download_selected_format(selected_book)
-
-                    if "success" in download_result:
-                        # Envoi du fichier
-                        try:
-                            with open(download_result["file_path"], 'rb') as f:
-                                if format_type in ['pdf', 'epub', 'mobi']:
-                                    await query.message.reply_document(
-                                        document=f,
-                                        filename=download_result["filename"],
-                                        caption="*tend le livre avec délicatesse*",
-                                        parse_mode='Markdown'
-                                    )
-                            await query.message.edit_text(
-                                "*range le livre*\n_Téléchargement terminé._",
-                                parse_mode='Markdown'
-                            )
-                        except Exception as e:
-                            logger.error(f"Erreur lors de l'envoi du fichier: {e}")
-                            await query.message.edit_text(
-                                "*semble désolé* Impossible d'envoyer le fichier.",
-                                parse_mode='Markdown'
-                            )
-                    else:
-                        error_msg = download_result.get("error", "Une erreur est survenue")
-                        await query.message.edit_text(
-                            f"*semble contrarié* {error_msg}",
-                            parse_mode='Markdown'
-                        )
-                else:
-                    await query.message.edit_text(
-                        "*fronce les sourcils* Format non disponible.",
-                        parse_mode='Markdown'
-                    )
-
-        else:
-            #Gérer les autres types de callback comme avant
-            pass
-
     except Exception as e:
         logger.error(f"Erreur dans handle_callback: {e}")
-        await query.message.edit_text(
+        await query.message.reply_text(
             "*semble troublé* Je ne peux pas traiter cette requête.",
             parse_mode='Markdown'
         )
@@ -715,7 +651,7 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Add new ebook_command function after other command functions
 async def ebook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /ebook avec sélection du format"""
+    """Gère la commande /ebook avec spécification de la langue"""
     progress_message = None
     try:
         # Vérifier les arguments
@@ -756,7 +692,7 @@ async def ebook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            # Recherche des formats disponibles
+            # Limite de temps pour la recherche et le téléchargement
             result = await asyncio.wait_for(
                 ebook_client.search_and_download(title, lang),
                 timeout=60.0
@@ -772,51 +708,39 @@ async def ebook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 return
 
             if "success" in result and result["success"]:
-                formats = result["formats"]
-
-                # Créer les boutons pour chaque format disponible
-                keyboard = []
-                for format_type, links in formats.items():
-                    for i, link in enumerate(links):
-                        button_text = f"{format_type.upper()} - Version {i+1}"
-                        callback_data = f"book_{format_type}_{i}_{title}_{lang}"
-                        keyboard.append([InlineKeyboardButton(button_text, callback_data=callback_data)])
-
-                reply_markup = InlineKeyboardMarkup(keyboard)
-
-                # Message avec les formats disponibles
-                await progress_message.edit_text(
-                    "*ajuste ses lunettes* Voici les formats disponibles :\n\n" +
-                    "\n".join([f"• Version {i+1} en {fmt.upper()}"
-                              for fmt, links in formats.items()
-                              for i in range(len(links))]) +
-                    "\n\nClique sur le format souhaité pour télécharger.",
-                    reply_markup=reply_markup,
-                    parse_mode='Markdown'
-                )
+                # Envoi du fichier
+                try:
+                    with open(result["file_path"], 'rb') as f:
+                        await update.message.reply_document(
+                            document=f,
+                            filename=result["filename"],
+                            caption="*tend le livre avec délicatesse*",
+                            parse_mode='Markdown'
+                        )
+                    await progress_message.delete()
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'envoi du fichier: {e}")
+                    await progress_message.edit_text(
+                        "*semble désolé* Impossible d'envoyer le fichier.",
+                        parse_mode='Markdown'
+                    )
             else:
                 await progress_message.edit_text(
-                    "*fronce les sourcils* Aucun format disponible pour ce livre.",
+                    "*fronce les sourcils* Je n'ai pas trouvé ce livre.",
                     parse_mode='Markdown'
                 )
 
         except asyncio.TimeoutError:
-            logger.error("Timeout lors de la recherche")
+            logger.error("Timeout lors de la recherche du livre")
             await progress_message.edit_text(
-                "*semble frustré* La recherche prend trop de temps.",
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"Erreur lors de la recherche: {e}")
-            await progress_message.edit_text(
-                "*semble troublé* Une erreur est survenue lors de la recherche.",
+                "*fronce les sourcils* La recherche prend trop de temps. Essaie une autre requête.",
                 parse_mode='Markdown'
             )
 
     except Exception as e:
-        error_message = "*semble perplexe* Je ne peux pas effectuer cette recherche."
         logger.error(f"Erreur dans ebook_command: {e}")
         logger.exception("Détails de l'erreur:")
+        error_message = "*semble perplexe* Je ne peux pas rechercher ce livre pour le moment."
 
         if progress_message:
             await progress_message.edit_text(error_message, parse_mode='Markdown')
