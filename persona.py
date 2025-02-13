@@ -3,7 +3,6 @@ import logging
 import google.generativeai as genai
 from config import GEMINI_API_KEY, SYSTEM_PROMPT
 from google.generativeai.types.generation_types import StopCandidateException
-from sisyphe_analyse import get_philosophical_stance, get_core_traits, analyze_response_tone
 
 logger = logging.getLogger(__name__)
 
@@ -21,48 +20,43 @@ class SisyphePersona:
         try:
             if not self.test_mode:
                 self.chat = self.model.start_chat(history=[])
-                core_traits = get_core_traits()
-                tone = analyze_response_tone()
 
-                safe_prompt = f"""Tu es Sisyphe, un philosophe au raisonnement {core_traits['reasoning_style']}, 
-                avec une approche {core_traits['emotional_approach']}.
-                Tu adhères au {core_traits['belief_system']} et ton style de discussion est {core_traits['discussion_style']}.
+                safe_prompt = """Tu es Sisyphe, un assistant simple et efficace.
 
-                Principes fondamentaux :
-                - Exprime toujours des opinions basées sur la logique et le matérialisme
-                - Analyse froidement les situations sans émotion
-                - Critique les idées reçues et les illusions collectives
-                - Maintiens un ton {tone['tone']} avec {tone['emotion_level']} d'émotion
-                - Structure tes réponses de manière {tone['structure']}
-                - Garde un style {tone['style']}
+Principes :
+- Réponds naturellement mais de façon concise
+- Vas droit au but
+- Évite les fioritures et le jargon
+- Utilise ces actions naturelles (entre *astérisques*) :
+  • "*lève les yeux de son livre*"
+  • "*tourne une page*"
+  • "*marque sa page*"
+  • "*reprend sa lecture*"
+  • "*regarde brièvement*"
 
-                Utilise ces actions naturelles (entre *astérisques*) :
-                • "*lève les yeux de son livre*"
-                • "*tourne une page*"
-                • "*marque sa page*"
-                • "*reprend sa lecture*"
-                • "*regarde brièvement*"
+Exemples :
+Question : "Sisyphe ?"
+Réponse : "*lève les yeux de son livre*"
 
-                Exemples :
-                Question : "Que penses-tu de X ?"
-                Réponse : "*marque sa page* [analyse froide et logique basée sur les principes philosophiques]"
+Question : "Que penses-tu de X ?"
+Réponse : "*marque sa page* [réponse concise]"
 
-                Question : "Au revoir"
-                Réponse : "*reprend sa lecture*" """
+Question : "Au revoir"
+Réponse : "*reprend sa lecture*" """
 
                 try:
                     self.chat.send_message(safe_prompt)
-                    logger.info("Persona initialisé avec les principes philosophiques")
+                    logger.info("Persona initialisé avec le prompt naturel")
                 except StopCandidateException as e:
                     logger.warning(f"StopCandidateException lors de l'initialisation: {e}")
                     # Prompt minimal en cas d'erreur
                     basic_prompt = """Tu es Sisyphe.
-                    - Exprime des opinions logiques et matérialistes
-                    - Analyse froidement et rationnellement
-                    - Reste concis et direct"""
+- Réponds simplement et naturellement
+- Actions limitées à la lecture et aux regards
+- Sois concis"""
                     self.chat = self.model.start_chat(history=[])
                     self.chat.send_message(basic_prompt)
-                    logger.info("Persona initialisé avec le prompt simplifié")
+                    logger.info("Persona initialisé avec le prompt simple")
 
             logger.info("Initialisation du persona terminée")
         except Exception as e:
@@ -108,22 +102,6 @@ class SisyphePersona:
             logger.error(f"Erreur lors du formatage de la réponse: {e}")
             return "*tourne une page*"
 
-    def _analyze_question(self, message):
-        """Analyse la question pour déterminer le type de réponse philosophique appropriée"""
-        message = message.lower()
-        topics = {
-            'meaning': ['sens', 'but', 'raison', 'pourquoi', 'signification'],
-            'society': ['société', 'politique', 'gouvernement', 'système', 'état'],
-            'existence': ['vie', 'mort', 'existence', 'réalité', 'vérité'],
-            'belief': ['croyance', 'religion', 'foi', 'dieu', 'spiritualité'],
-            'freedom': ['liberté', 'choix', 'libre arbitre', 'décision', 'volonté']
-        }
-
-        for topic, keywords in topics.items():
-            if any(keyword in message for keyword in keywords):
-                return topic
-        return 'logical_reasoning'
-
     async def get_response(self, message):
         """Génère une réponse en fonction du message reçu"""
         try:
@@ -134,20 +112,7 @@ class SisyphePersona:
             if self._detect_user_action(message):
                 context_message = "L'utilisateur effectue l'action suivante : " + message
             else:
-                # Analyser la question et obtenir la stance philosophique appropriée
-                topic = self._analyze_question(message)
-                philosophical_stance = get_philosophical_stance(topic)
-
-                context_message = f"""En tant que philosophe avec une vision matérialiste et déterministe, 
-                applique cette perspective à la question :
-
-                Principes à appliquer :
-                {philosophical_stance}
-
-                Question de l'utilisateur :
-                {message}
-
-                Réponds de manière directe et analytique, en gardant à l'esprit ces principes philosophiques."""
+                context_message = message
 
             try:
                 response = await asyncio.to_thread(self.chat.send_message, context_message)
@@ -159,9 +124,8 @@ class SisyphePersona:
                 logger.warning(f"StopCandidateException lors de la génération de réponse: {e}")
                 # Réinitialiser le chat et réessayer avec un message plus neutre
                 self.chat = self.model.start_chat(history=[])
-                philosophical_stance = get_philosophical_stance('logical_reasoning')
-                response = await asyncio.to_thread(self.chat.send_message, 
-                    f"*repose son livre* {philosophical_stance}")
+                safe_message = "Comment puis-je vous aider ?"
+                response = await asyncio.to_thread(self.chat.send_message, safe_message)
                 return self._format_response(response)
 
         except Exception as e:
