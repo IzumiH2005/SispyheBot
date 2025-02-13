@@ -86,46 +86,56 @@ Je peux t'aider de plusieurs façons :
 async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Affiche un menu sophistiqué des commandes disponibles"""
     try:
-        menu_text = """*pose délicatement son livre et ajuste ses lunettes*
+        menu_text = """*ferme délicatement son livre et ajuste ses lunettes*
 
-📚 **Guide d'utilisation de Sisyphe** 📚
+╔══════════════════════════════════════╗
+║     📚 Bibliothèque de Sisyphe 📚    ║
+╚══════════════════════════════════════╝
 
-Je suis Sisyphe, votre compagnon philosophique et érudit. Je peux vous aider de plusieurs manières :
+Je suis Sisyphe, votre compagnon philosophique. Laissez-moi vous guider à travers mes capacités.
 
-🤝 **Interaction Basique**
-• Mentionnez mon nom ou répondez à mes messages pour engager la conversation
-• Je répondrai avec concision et précision
+🎭 **Commandes Principales**
+┌─────────────────────────────────────┐
+│ • /start - Débuter notre dialogue   │
+│ • /help  - Obtenir de l'assistance  │
+│ • /menu  - Afficher ce guide        │
+└─────────────────────────────────────┘
 
-📜 **Commandes Principales**
-"""
-        for cmd, desc in COMMANDS.items():
-            menu_text += f"• /{cmd} - {desc}\n"
+🔍 **Recherche & Connaissances**
+┌─────────────────────────────────────┐
+│ • /search - Recherche approfondie   │
+│   Usage: /search [votre question]   │
+│   Ex: /search "philosophie grecque" │
+└─────────────────────────────────────┘
 
-        menu_text += """
+📱 **Médias & Culture**
+┌─────────────────────────────────────┐
+│ • /yt    - Télécharger vidéo/audio │
+│   Usage: /yt [titre ou lien]        │
+│   Limite: 50MB maximum              │
+│                                     │
+│ • /fiche - Créer fiche détaillée   │
+│   Usage: /fiche [titre]             │
+│   Ex: /fiche "Death Note"           │
+│                                     │
+│ • /ebook - Rechercher un livre     │
+│   Usage: /ebook [titre] [langue]    │
+│   Ex: /ebook "Platon" fr           │
+└─────────────────────────────────────┘
 
-🔍 **Fonctionnalités de Recherche**
-• Pour la commande /search :
-  - Utilisez des mots-clés précis
-  - Les résultats seront sourcés et vérifiés
-  - Format : /search votre question
+💡 **Conseils d'Utilisation**
+• Pour une conversation naturelle :
+  - Mentionnez simplement "Sisyphe"
+  - Ou répondez à mes messages
+• Préférez des questions précises
+• Attendez ma réponse avant de poursuivre
 
-🎥 **Téléchargement YouTube**
-• Pour la commande /yt :
-  - Indiquez le titre ou les mots-clés
-  - Choisissez le format (MP3/MP4)
-  - Limite : 75MB
-
-💡 **Astuces**
-• Soyez précis dans vos requêtes
-• Préférez des questions clairement formulées
-• Attendez ma réponse avant d'envoyer une nouvelle demande
-
-*reprend son livre*"""
+*reprend son livre avec un léger sourire*"""
 
         await update.message.reply_text(menu_text, parse_mode='Markdown')
     except Exception as e:
         logger.error(f"Erreur dans menu_command: {e}")
-        await update.message.reply_text("*fronce les sourcils* Un moment d'égarement...")
+        await update.message.reply_text("*fronce les sourcils* Un moment d'égarement...", parse_mode='Markdown')
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gère la commande /search avec un meilleur feedback"""
