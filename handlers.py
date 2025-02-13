@@ -1,7 +1,7 @@
 import logging
 import asyncio
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ContextTypes, CallbackContext
 from telegram.error import TelegramError
 from persona import SisyphePersona
@@ -757,18 +757,15 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.info(f"Téléchargement de l'image de couverture: {image_url}")
                     image_paths = await media_handler.download_images([image_url])
 
-                    if image_paths:
-                        media_group = []
-                        for image_path in image_paths:
-                            try:
-                                with open(image_path, 'rb') as f:
-                                    media_group.append(InputMediaPhoto(f))
-                            except Exception as photo_error:
-                                logger.error(f"Erreur lors de la préparation de la photo: {photo_error}")
-                                continue
-                        
-                        if media_group:
-                            await update.message.reply_media_group(media=media_group)
+                    if image_paths and len(image_paths) > 0:
+                        image_path = image_paths[0]
+                        try:
+                            with open(image_path, 'rb') as f:
+                                await update.message.reply_photo(
+                                    photo=f,
+                                    caption="*présente la couverture avec élégance*",
+                                    parse_mode='Markdown'
+                                )
                         except Exception as photo_error:
                             logger.error(f"Erreur lors de l'envoi de la photo: {photo_error}")
                 except Exception as image_error:

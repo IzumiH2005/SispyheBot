@@ -22,7 +22,7 @@ class MediaHandler:
         self.target_size = 1600  # px
 
         # Domaines autorisés pour les images
-        self.allowed_domains = {'zerochan.net', 'pinterest.com', 'pinimg.com'}  # Garder Zerochan et Pinterest
+        self.allowed_domains = {'zerochan.net', 'pinterest.com', 'pinimg.com'}
 
     async def download_image(self, url: str) -> Optional[str]:
         """Télécharge et traite une image"""
