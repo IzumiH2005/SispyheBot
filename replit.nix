@@ -1,5 +1,11 @@
 {pkgs}: {
   deps = [
+    pkgs.xcodebuild
+    pkgs.pkg-config
+    pkgs.c-ares
+    pkgs.grpc
+    pkgs.cacert
+    pkgs.glibcLocales
     pkgs.ffmpeg-full
     pkgs.zlib
     pkgs.tk

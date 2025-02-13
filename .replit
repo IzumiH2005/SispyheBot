@@ -5,7 +5,7 @@ channel = "stable-24_05"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "python3 -u bot.py"]
+run = ["sh", "-c", "python3 bot.py"]
 
 [workflows]
 runButton = "Project"
@@ -19,6 +19,10 @@ author = "agent"
 task = "workflow.run"
 args = "Telegram Bot"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Health Check"
+
 [[workflows.workflow]]
 name = "Telegram Bot"
 author = "agent"
@@ -31,4 +35,26 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 -u bot.py"
+args = "python3 bot.py"
+
+[[workflows.workflow]]
+name = "Health Check"
+author = "agent"
+
+[workflows.workflow.metadata]
+agentRequireRestartOnSave = false
+
+[[workflows.workflow.tasks]]
+task = "packager.installForAll"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python3 health_check.py"
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080

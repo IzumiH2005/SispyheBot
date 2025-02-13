@@ -3,6 +3,7 @@ import logging
 import nest_asyncio
 import os
 import sys
+import threading
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -20,7 +21,7 @@ from handlers import (
     search_command,
     yt_command,
     fiche_command,
-    ebook_command,  # Add this line
+    ebook_command,
     handle_message,
     handle_callback
 )
@@ -51,31 +52,28 @@ async def main():
                 with open(pid_file, 'r') as f:
                     old_pid = int(f.read())
                 try:
-                    # Vérifier si le processus existe encore
                     os.kill(old_pid, 0)
-                    logger.error("[DEBUG] Une instance du bot est déjà en cours d'exécution")
+                    logger.error("Une instance du bot est déjà en cours d'exécution")
                     sys.exit(1)
                 except OSError:
-                    # Le processus n'existe plus, on peut continuer
-                    logger.info("[DEBUG] Ancien processus terminé, démarrage d'une nouvelle instance")
+                    logger.info("Ancien processus terminé, démarrage d'une nouvelle instance")
                     pass
 
-            # Écrire notre PID
             with open(pid_file, 'w') as f:
                 f.write(str(os.getpid()))
-                logger.info(f"[DEBUG] PID {os.getpid()} écrit dans {pid_file}")
+                logger.info(f"PID {os.getpid()} écrit dans {pid_file}")
         except Exception as e:
-            logger.error(f"[DEBUG] Erreur lors de la vérification du PID: {str(e)}")
+            logger.error(f"Erreur lors de la vérification du PID: {str(e)}")
             sys.exit(1)
 
         # Vérifier le token Telegram
         if not TELEGRAM_TOKEN:
-            logger.error("[DEBUG] Token Telegram manquant")
+            logger.error("Token Telegram manquant")
             sys.exit(1)
-        logger.info("[DEBUG] Token Telegram validé")
+        logger.info("Token Telegram validé")
 
         # Création de l'application avec une meilleure gestion des timeouts
-        logger.info("[DEBUG] Initialisation de l'application Telegram")
+        logger.info("Initialisation de l'application Telegram")
         application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
         # Ajout des handlers avec logging amélioré
@@ -86,59 +84,50 @@ async def main():
             ('search', search_command),
             ('yt', yt_command),
             ('fiche', fiche_command),
-            ('ebook', ebook_command)  # Add this line
+            ('ebook', ebook_command)
         ]
 
         for command, handler in handlers:
             application.add_handler(CommandHandler(command, handler))
-            logger.info(f"[DEBUG] Handler ajouté pour la commande /{command}")
+            logger.info(f"Handler ajouté pour la commande /{command}")
 
         application.add_handler(CallbackQueryHandler(handle_callback))
         application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             handle_message
         ))
-        logger.info("[DEBUG] Tous les handlers ont été configurés")
+        logger.info("Tous les handlers ont été configurés")
 
         # Démarrage du bot avec gestion d'erreur améliorée
-        logger.info("[DEBUG] Démarrage du bot...")
+        logger.info("Démarrage du bot...")
         await application.run_polling(
-            drop_pending_updates=True,  # Ignorer les messages reçus pendant l'arrêt
-            allowed_updates=['message', 'callback_query']  # Limiter les types de mises à jour
+            drop_pending_updates=True,
+            allowed_updates=['message', 'callback_query']
         )
 
     except TelegramError as e:
-        logger.error(f"[DEBUG] Erreur Telegram lors du démarrage: {str(e)}")
-        logger.exception("[DEBUG] Détails de l'erreur Telegram:")
+        logger.error(f"Erreur Telegram lors du démarrage: {str(e)}")
+        logger.exception("Détails de l'erreur Telegram:")
         raise
     except Exception as e:
-        logger.error(f"[DEBUG] Erreur critique lors du démarrage: {str(e)}")
-        logger.exception("[DEBUG] Détails de l'erreur:")
+        logger.error(f"Erreur critique lors du démarrage: {str(e)}")
+        logger.exception("Détails de l'erreur:")
         raise
     finally:
         # Nettoyage du fichier PID à la fin
         try:
             if os.path.exists(pid_file):
                 os.remove(pid_file)
-                logger.info(f"[DEBUG] Fichier PID {pid_file} supprimé")
+                logger.info(f"Fichier PID {pid_file} supprimé")
         except Exception as e:
-            logger.error(f"[DEBUG] Erreur lors du nettoyage du fichier PID: {str(e)}")
+            logger.error(f"Erreur lors du nettoyage du fichier PID: {str(e)}")
 
 if __name__ == '__main__':
     try:
-        logger.info("[DEBUG] Démarrage du script principal")
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(main())
+        logger.info("Démarrage du script principal")
+        asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("[DEBUG] Arrêt du bot par l'utilisateur")
+        logger.info("Arrêt du bot par l'utilisateur")
     except Exception as e:
-        logger.error(f"[DEBUG] Erreur critique: {str(e)}")
-        logger.exception("[DEBUG] Détails de l'erreur:")
-    finally:
-        # S'assurer que le bot se termine proprement
-        try:
-            loop.close()
-            logger.info("[DEBUG] Boucle d'événements fermée")
-        except Exception as e:
-            logger.error(f"[DEBUG] Erreur lors de la fermeture de la boucle: {str(e)}")
-            pass
+        logger.error(f"Erreur critique: {str(e)}")
+        logger.exception("Détails de l'erreur:")
