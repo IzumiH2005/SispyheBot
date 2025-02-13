@@ -33,12 +33,37 @@ class EbookClient:
         parts = command.strip().split()
         if len(parts) < 2:
             return "", "fr"  # Langue par défaut: français
-
+        
         # Si la dernière partie est un code de langue de 2-3 caractères
         if len(parts[-1]) in [2, 3] and parts[-1].isalpha():
             return " ".join(parts[:-1]), parts[-1].lower()
-
+        
         return " ".join(parts), "fr"
+
+    async def _download_ebook(self, url: str, title: str) -> Optional[str]:
+        """Télécharge l'ebook depuis l'URL donnée"""
+        try:
+            response = requests.get(url, stream=True, timeout=30)
+            if response.status_code == 200:
+                # Créer un fichier temporaire avec une extension appropriée
+                ext = url.split('.')[-1].lower()
+                if ext not in ['pdf', 'epub', 'mobi', 'txt']:
+                    ext = 'pdf'  # Extension par défaut
+                
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as temp_file:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        temp_file.write(chunk)
+                    
+                    # Renommer le fichier avec le titre
+                    final_path = temp_file.name
+                    safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
+                    new_path = os.path.join(os.path.dirname(final_path), f"{safe_title}.{ext}")
+                    os.rename(final_path, new_path)
+                    return new_path
+            return None
+        except Exception as e:
+            logger.error(f"Erreur lors du téléchargement: {str(e)}")
+            return None
 
     async def search_and_download_ebook(self, command: str) -> Dict[str, Any]:
         """Recherche et télécharge un ebook"""
@@ -76,7 +101,7 @@ class EbookClient:
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.client.chat.completions.create,
-                    model="claude-2",  # Changé pour utiliser claude-2 au lieu de sonar-pro
+                    model="sonar-pro",
                     messages=messages,
                     temperature=0.1,
                     stream=False
@@ -92,32 +117,14 @@ class EbookClient:
 
             # Essayer de télécharger depuis chaque URL jusqu'à ce qu'un téléchargement réussisse
             for url in urls:
-                try:
-                    response = requests.get(url, stream=True, timeout=30)
-                    if response.status_code == 200:
-                        # Créer un fichier temporaire avec une extension appropriée
-                        ext = url.split('.')[-1].lower()
-                        if ext not in ['pdf', 'epub', 'mobi', 'txt']:
-                            ext = 'pdf'  # Extension par défaut
-
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}') as temp_file:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                temp_file.write(chunk)
-
-                            # Renommer le fichier avec le titre
-                            final_path = temp_file.name
-                            safe_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).strip()
-                            new_path = os.path.join(os.path.dirname(final_path), f"{safe_title}.{ext}")
-                            os.rename(final_path, new_path)
-                            return {
-                                "success": True,
-                                "file_path": new_path,
-                                "title": title,
-                                "original_url": url
-                            }
-                except Exception as e:
-                    logger.error(f"Erreur lors du téléchargement depuis {url}: {str(e)}")
-                    continue
+                file_path = await self._download_ebook(url, title)
+                if file_path:
+                    return {
+                        "success": True,
+                        "file_path": file_path,
+                        "title": title,
+                        "original_url": url
+                    }
 
             return {"error": "Impossible de télécharger l'ebook depuis les liens trouvés"}
 
