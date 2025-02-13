@@ -357,19 +357,23 @@ async def handle_callback(update: Update, context: CallbackContext):
     query = update.callback_query
     try:
         await query.answer()
+        logger.info(f"Callback reçu: {query.data}")
 
         if query.data.startswith('yt_'):
             parts = query.data.split('_', 2)
             if len(parts) != 3:
+                logger.error(f"Format de callback incorrect: {query.data}")
                 raise ValueError("Format de callback incorrect")
 
             _, index, video_id = parts
             url = f"https://www.youtube.com/watch?v={video_id}"
+            logger.info(f"Traitement de la vidéo: {url}")
 
             # Obtenir la durée de la vidéo
             video_info = await media_handler.get_video_info(url)
             duration_seconds = video_info.get('duration', 0)
             is_long_video = duration_seconds > 360  # Plus de 6 minutes
+            logger.info(f"Durée de la vidéo: {duration_seconds}s, longue vidéo: {is_long_video}")
 
             # Choisir la résolution en fonction de la durée
             resolution = "240p" if is_long_video else "360p"
@@ -387,17 +391,20 @@ async def handle_callback(update: Update, context: CallbackContext):
         elif query.data.startswith('format_'):
             parts = query.data.split('_', 3)
             if len(parts) < 3:
+                logger.error(f"Format de callback incorrect: {query.data}")
                 raise ValueError("Format de callback incorrect")
 
             _, format_type, video_id = parts[:3]
             resolution = parts[3] if len(parts) > 3 else None
+            logger.info(f"Téléchargement demandé: format={format_type}, resolution={resolution}")
 
             if format_type not in ['mp3', 'mp4']:
+                logger.error(f"Format non supporté: {format_type}")
                 raise ValueError("Format non supporté")
 
             url = f"https://www.youtube.com/watch?v={video_id}"
 
-            # Message de progression
+            # Message de progression via le message existant
             progress_msg = await query.edit_message_text(
                 "*commence le téléchargement*\n_Préparation..._",
                 parse_mode='Markdown'
@@ -405,19 +412,22 @@ async def handle_callback(update: Update, context: CallbackContext):
 
             try:
                 # Téléchargement avec timeout et résolution spécifique
+                logger.info("Début du téléchargement...")
                 file_path = await asyncio.wait_for(
                     media_handler.download_youtube_video(url, format_type, resolution),
                     timeout=300  # 5 minutes maximum
                 )
+                logger.info(f"Téléchargement terminé. Fichier: {file_path}")
 
                 if not file_path:
-                    await progress_msg.edit_text(
+                    logger.error("Échec du téléchargement: pas de fichier retourné")
+                    await query.edit_message_text(
                         "*fronce les sourcils* La vidéo n'est pas accessible.",
                         parse_mode='Markdown'
                     )
                     return
 
-                await progress_msg.edit_message_text(
+                await query.edit_message_text(
                     "*prépare l'envoi*\n_Vérification du fichier..._",
                     parse_mode='Markdown'
                 )
@@ -427,14 +437,17 @@ async def handle_callback(update: Update, context: CallbackContext):
                     with open(file_path, 'rb') as f:
                         file_size = os.path.getsize(file_path)
                         size_mb = file_size / (1024 * 1024)
+                        logger.info(f"Taille du fichier: {size_mb:.1f}MB")
 
                         if size_mb > 50:  # Limite Telegram de 50MB
-                            await progress_msg.edit_text(
+                            logger.warning(f"Fichier trop volumineux: {size_mb:.1f}MB")
+                            await query.edit_message_text(
                                 f"*semble désolé* Le fichier est trop volumineux ({size_mb:.1f}MB > 50MB).",
                                 parse_mode='Markdown'
                             )
                             return
 
+                        logger.info(f"Envoi du fichier en tant que {format_type}")
                         if format_type == 'mp3':
                             await query.message.reply_audio(
                                 audio=f,
@@ -449,32 +462,35 @@ async def handle_callback(update: Update, context: CallbackContext):
                                 supports_streaming=True
                             )
 
-                    await progress_msg.edit_text(
+                    await query.edit_message_text(
                         "*termine le processus* Envoi terminé.",
                         parse_mode='Markdown'
                     )
 
                 except TelegramError as te:
                     logger.error(f"Erreur Telegram lors de l'envoi: {te}")
-                    await progress_msg.edit_text(
+                    await query.edit_message_text(
                         "*semble désolé* Impossible d'envoyer le fichier.",
                         parse_mode='Markdown'
                     )
 
             except asyncio.TimeoutError:
-                await progress_msg.edit_text(
+                logger.error("Timeout lors du téléchargement")
+                await query.edit_message_text(
                     "*semble frustré* Le téléchargement prend trop de temps.",
                     parse_mode='Markdown'
                 )
             except Exception as e:
-                logger.error(f"Erreur lors du téléchargement: {e}")
-                await progress_msg.edit_text(
-                    "*semble troublé* Une erreur est survenue.",
+                logger.error(f"Erreur lors du téléchargement: {str(e)}")
+                logger.exception("Détails de l'erreur:")
+                await query.edit_message_text(
+                    "*semble troublé* Une erreur est survenue lors du téléchargement.",
                     parse_mode='Markdown'
                 )
 
     except Exception as e:
-        logger.error(f"Erreur dans handle_callback: {e}")
+        logger.error(f"Erreur dans handle_callback: {str(e)}")
+        logger.exception("Détails de l'erreur:")
         await query.message.reply_text(
             "*semble troublé* Je ne peux pas traiter cette requête.",
             parse_mode='Markdown'

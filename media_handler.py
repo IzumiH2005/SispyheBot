@@ -143,11 +143,16 @@ class MediaHandler:
     async def download_youtube_video(self, url: str, format_type: str, resolution: Optional[str] = None) -> Optional[str]:
         """Download YouTube video in specified format and resolution"""
         try:
-            logger.info(f"Downloading {url} in {format_type} format")
+            logger.info(f"Début du téléchargement: {url} en format {format_type}")
 
             # Get video info first to get the title
             info = await self.get_video_info(url)
+            if not info:
+                logger.error("Impossible d'obtenir les informations de la vidéo")
+                return None
+
             title = info.get('title', 'video')
+            logger.debug(f"Informations vidéo récupérées: {info}")
 
             # Clean the title to make it filesystem-friendly
             clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
@@ -156,6 +161,7 @@ class MediaHandler:
 
             timestamp = int(time.time())
             temp_path = os.path.join(self.temp_dir, f"{clean_title}_{timestamp}")
+            logger.debug(f"Chemin temporaire: {temp_path}")
 
             if format_type == 'mp3':
                 ydl_opts = {
@@ -167,38 +173,55 @@ class MediaHandler:
                     }],
                     'outtmpl': f"{temp_path}.%(ext)s",
                     'quiet': True,
-                    'no_warnings': True
+                    'no_warnings': True,
+                    'extract_flat': False,
+                    'verbose': False,
+                    'cachedir': False,
+                    'noplaylist': True
                 }
                 final_path = f"{temp_path}.mp3"
             else:  # mp4
                 if resolution:
-                    video_format = f"bestvideo[height<={resolution[:-1]}]+bestaudio/best[height<={resolution[:-1]}]"
+                    format_spec = f"bestvideo[height<={resolution[:-1]}]+bestaudio/best[height<={resolution[:-1]}]"
                 else:
-                    video_format = 'best'
+                    format_spec = 'bestvideo+bestaudio/best'
 
                 ydl_opts = {
-                    'format': video_format,
+                    'format': format_spec,
                     'merge_output_format': 'mp4',
                     'outtmpl': f"{temp_path}.%(ext)s",
                     'quiet': True,
-                    'no_warnings': True
+                    'no_warnings': True,
+                    'extract_flat': False,
+                    'verbose': False,
+                    'cachedir': False,
+                    'noplaylist': True
                 }
                 final_path = f"{temp_path}.mp4"
 
-            logger.debug(f"Download options: {ydl_opts}")
+            logger.debug(f"Options yt-dlp: {ydl_opts}")
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                await asyncio.to_thread(ydl.download, [url])
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    logger.info("Début du téléchargement avec yt-dlp")
+                    await asyncio.to_thread(ydl.download, [url])
+                    logger.info("Téléchargement terminé")
+            except Exception as e:
+                logger.error(f"Erreur pendant le téléchargement yt-dlp: {str(e)}")
+                logger.exception("Détails de l'erreur yt-dlp:")
+                raise
 
             if os.path.exists(final_path):
-                logger.info(f"Download successful: {final_path}")
+                file_size = os.path.getsize(final_path)
+                logger.info(f"Fichier créé avec succès: {final_path} ({file_size/1024/1024:.2f}MB)")
                 return final_path
 
-            logger.error("Download failed: File not found")
+            logger.error(f"Le fichier final n'existe pas: {final_path}")
             return None
 
         except Exception as e:
-            logger.error(f"Error downloading video: {str(e)}")
+            logger.error(f"Erreur lors du téléchargement: {str(e)}")
+            logger.exception("Détails complets de l'erreur:")
             return None
 
     def cleanup(self, specific_path: Optional[str] = None):
