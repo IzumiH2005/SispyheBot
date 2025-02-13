@@ -9,7 +9,6 @@ from admin import AdminManager
 from perplexity_client import PerplexityClient
 from media_handler import MediaHandler
 import re
-from scraper import GoogleImageScraper  # Changed import
 from fiche import FicheClient
 
 logger = logging.getLogger(__name__)
@@ -20,12 +19,11 @@ perplexity_client = PerplexityClient()
 media_handler = MediaHandler()
 fiche_client = FicheClient()
 
-# Liste des commandes et leurs descriptions pour le menu
+# Mise à jour des commandes sans /image
 COMMANDS = {
     'start': 'Débuter une conversation avec Sisyphe',
     'help': 'Obtenir de l\'aide sur l\'utilisation du bot',
     'search': 'Rechercher des informations (ex: /search philosophie grecque)',
-    'image': 'Rechercher des images (ex: /image paysage montagne)',
     'yt': 'Rechercher et télécharger une vidéo YouTube',
     'fiche': 'Créer une fiche détaillée d\'anime/série (ex: /fiche Naruto)',
     'menu': 'Afficher ce menu d\'aide'
@@ -69,9 +67,6 @@ Je peux t'aider de plusieurs façons :
 🔍 /search + ta question
    Pour des recherches précises et sourcées
 
-🖼 /image + description
-   Pour trouver des images spécifiques
-
 🎥 /yt + titre
    Pour télécharger des vidéos YouTube
 
@@ -110,11 +105,6 @@ Je suis Sisyphe, votre compagnon philosophique et érudit. Je peux vous aider de
   - Utilisez des mots-clés précis
   - Les résultats seront sourcés et vérifiés
   - Format : /search votre question
-
-🖼 **Recherche d'Images**
-• Pour la commande /image :
-  - Décrivez l'image souhaitée
-  - Format : /image description détaillée
 
 🎥 **Téléchargement YouTube**
 • Pour la commande /yt :
@@ -294,188 +284,58 @@ Instructions de formatage :
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
 
-async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /image avec une approche ultra-simplifiée et logs détaillés"""
-    progress_message = None
-    try:
-        query = ' '.join(context.args) if context.args else None
-        if not query:
-            await update.message.reply_text(
-                "*lève un sourcil* Quelle image cherches-tu ?",
-                parse_mode='Markdown'
-            )
-            return
+# Suppression de la fonction image_command
 
-        logger.info(f"Début de la recherche d'images pour la requête: {query}")
-
-        # Message de progression initial
-        progress_message = await update.message.reply_text(
-            "*parcourt sa collection*\n_Recherche d'images en cours..._",
-            parse_mode='Markdown'
-        )
-
-        # Recherche d'images
-        scraper = GoogleImageScraper() # Using the new class
-        logger.info(f"[DEBUG] Début de la recherche avec GoogleImageScraper pour query: {query}")
-        image_urls = await scraper.search_images(query, max_results=10) # Increased results
-        logger.info(f"[DEBUG] URLs trouvées ({len(image_urls)}): {image_urls}")
-
-        if not image_urls:
-            logger.warning("[DEBUG] Aucune URL d'image trouvée, arrêt du processus")
-            await progress_message.edit_text(
-                "*fronce les sourcils* Je n'ai pas trouvé d'images correspondant à ta recherche.",
-                parse_mode='Markdown'
-            )
-            return
-
-        # Télécharger toutes les images d'abord
-        await progress_message.edit_text(
-            "*examine les images*\n_Préparation des images..._",
-            parse_mode='Markdown'
-        )
-
-        image_paths = []
-        for url in image_urls:
-            try:
-                logger.info(f"[DEBUG] Tentative de téléchargement pour URL: {url}")
-                image_path = await media_handler.download_image(url)
-                if image_path and os.path.exists(image_path):
-                    logger.info(f"[DEBUG] Image téléchargée avec succès: {image_path}")
-                    image_paths.append(image_path)
-                else:
-                    logger.warning(f"[DEBUG] Échec du téléchargement pour {url}, path: {image_path}")
-            except Exception as e:
-                logger.error(f"[DEBUG] Erreur lors du téléchargement de {url}: {str(e)}")
-                continue
-
-        if not image_paths:
-            logger.warning("[DEBUG] Aucune image n'a pu être téléchargée")
-            await progress_message.edit_text(
-                "*semble déçu* Je n'ai pas pu télécharger les images.",
-                parse_mode='Markdown'
-            )
-            return
-
-        # Envoyer les images une par une
-        sent_images = 0
-        logger.info(f"[DEBUG] Début de l'envoi des images. Nombre d'images à envoyer: {len(image_paths)}")
-        for image_path in image_paths:
-            try:
-                # Vérifier que le fichier existe et n'est pas vide
-                if not os.path.exists(image_path) or os.path.getsize(image_path) == 0:
-                    logger.error(f"[DEBUG] Fichier invalide ou vide: {image_path}")
-                    continue
-
-                # Vérifier la taille du fichier
-                file_size = os.path.getsize(image_path)
-                logger.info(f"[DEBUG] Taille du fichier {image_path}: {file_size/1024/1024:.1f}MB")
-                if file_size > 5 * 1024 * 1024:  # 5MB
-                    logger.warning(f"[DEBUG] Image trop volumineuse ({file_size/1024/1024:.1f}MB): {image_path}")
-                    continue
-
-                # Envoi avec retry
-                max_retries = 3
-                for attempt in range(max_retries):
-                    try:
-                        logger.info(f"[DEBUG] Tentative d'envoi {attempt + 1}/{max_retries} pour {image_path}")
-                        with open(image_path, 'rb') as photo:
-                            await update.message.reply_photo(
-                                photo=photo,
-                                caption="*observe l'image avec intérêt*",
-                                parse_mode='Markdown'
-                            )
-                        sent_images += 1
-                        logger.info(f"[DEBUG] Image envoyée avec succès: {image_path}")
-                        break
-                    except TelegramError as te:
-                        logger.error(f"[DEBUG] Erreur Telegram lors de la tentative {attempt + 1}: {str(te)}")
-                        if attempt < max_retries - 1:
-                            logger.warning(f"[DEBUG] Nouvelle tentative dans 1 seconde...")
-                            await asyncio.sleep(1)
-                        else:
-                            logger.error(f"[DEBUG] Échec définitif après {max_retries} tentatives")
-                            raise
-
-            except Exception as e:
-                logger.error(f"[DEBUG] Erreur lors de l'envoi de l'image {image_path}: {str(e)}")
-                continue
-            finally:
-                # Nettoyage des fichiers après chaque envoi
-                try:
-                    if os.path.exists(image_path):
-                        logger.info(f"[DEBUG] Nettoyage du fichier: {image_path}")
-                        media_handler.cleanup(image_path)
-                except Exception as e:
-                    logger.error(f"[DEBUG] Erreur lors du nettoyage de {image_path}: {str(e)}")
-
-        # Message final
-        logger.info(f"[DEBUG] Processus terminé. Images envoyées: {sent_images}/{len(image_paths)}")
-        if sent_images > 0:
-            await progress_message.edit_text(
-                "*range ses documents* Voici ce que j'ai trouvé.",
-                parse_mode='Markdown'
-            )
-        else:
-            await progress_message.edit_text(
-                "*semble déçu* Je n'ai pas pu envoyer les images.",
-                parse_mode='Markdown'
-            )
-
-    except Exception as e:
-        logger.error(f"Erreur générale dans image_command: {e}", exc_info=True)
-        error_message = "*semble perplexe* Je ne peux pas traiter ces images pour le moment."
-        if progress_message:
-            await progress_message.edit_text(error_message, parse_mode='Markdown')
-        else:
-            await update.message.reply_text(error_message, parse_mode='Markdown')
-    finally:
-        # Nettoyage final
-        logger.info("Nettoyage final des ressources")
-        media_handler.cleanup()
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /yt"""
+    """Gère la commande /yt avec une meilleure recherche YouTube"""
     try:
         query = ' '.join(context.args) if context.args else None
         if not query:
             await update.message.reply_text("*lève un sourcil* Quelle vidéo cherches-tu ?", parse_mode='Markdown')
             return
 
-        # Indiquer que le bot est en train d'écrire
-        await update.message.chat.send_action(action="typing")
+        # Message de progression
+        progress_msg = await update.message.reply_text(
+            "*recherche des vidéos*\n_Veuillez patienter..._",
+            parse_mode='Markdown'
+        )
 
-        # Rechercher les vidéos avec yt-dlp
-        videos = await media_handler.search_youtube(query)
+        # Rechercher les vidéos avec yt-dlp (limité à 5 résultats)
+        videos = await media_handler.search_youtube(query, max_results=5)
         if not videos:
-            await update.message.reply_text("*fronce les sourcils* Je n'ai pas trouvé de vidéos correspondant à ta recherche.", parse_mode='Markdown')
+            await progress_msg.edit_text(
+                "*fronce les sourcils* Je n'ai pas trouvé de vidéos correspondant à ta recherche.",
+                parse_mode='Markdown'
+            )
             return
 
-        # Créer les boutons pour chaque vidéo avec des titres plus clairs
+        # Créer les boutons pour chaque vidéo
         keyboard = []
         for i, video in enumerate(videos):
             title = video['title']
-            # Limiter la longueur du titre si nécessaire
+            duration = video.get('duration_str', 'Durée inconnue')
+
+            # Limiter la longueur du titre
             if len(title) > 35:
                 title = title[:32] + "..."
 
-            # Ajouter la durée si disponible
-            if 'duration_str' in video:
-                title = f"{title} ({video['duration_str']})"
+            # Format: Titre (Durée)
+            button_text = f"{title} ({duration})"
 
-            # Créer un callback_data sécurisé
+            # Créer un callback_data sécurisé avec l'ID de la vidéo
             video_id = video['url'].split('watch?v=')[-1].split('&')[0]
-            callback_data = f"yt_{i}_{video_id}"
-            keyboard.append([InlineKeyboardButton(title, callback_data=callback_data)])
+            keyboard.append([InlineKeyboardButton(button_text, callback_data=f"yt_{i}_{video_id}")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Créer un message de réponse détaillé
+        # Message détaillé avec la liste des vidéos
         message = "*consulte son catalogue* Voici les vidéos trouvées :\n\n"
         for i, video in enumerate(videos, 1):
             duration = video.get('duration_str', 'Durée inconnue')
             message += f"{i}. {video['title']} ({duration})\n"
 
-        await update.message.reply_text(
+        await progress_msg.edit_text(
             message,
             reply_markup=reply_markup,
             parse_mode='Markdown'
@@ -484,10 +344,13 @@ async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Erreur dans yt_command: {e}")
         logger.exception("Détails de l'erreur:")
-        await update.message.reply_text("*semble troublé* Je ne peux pas rechercher de vidéos pour le moment.", parse_mode='Markdown')
+        await update.message.reply_text(
+            "*semble troublé* Je ne peux pas rechercher de vidéos pour le moment.",
+            parse_mode='Markdown'
+        )
 
 async def handle_callback(update: Update, context: CallbackContext):
-    """Gère les callbacks des boutons inline avec une meilleure gestion des fichiers"""
+    """Gère les callbacks des boutons inline"""
     query = update.callback_query
     try:
         await query.answer()
@@ -500,9 +363,17 @@ async def handle_callback(update: Update, context: CallbackContext):
             _, index, video_id = parts
             url = f"https://www.youtube.com/watch?v={video_id}"
 
+            # Obtenir la durée de la vidéo
+            video_info = await media_handler.get_video_info(url)
+            duration_seconds = video_info.get('duration', 0)
+            is_long_video = duration_seconds > 360  # Plus de 6 minutes
+
+            # Choisir la résolution en fonction de la durée
+            resolution = "240p" if is_long_video else "360p"
+
             keyboard = [
                 [InlineKeyboardButton("MP3 (Audio)", callback_data=f"format_mp3_{video_id}")],
-                [InlineKeyboardButton("MP4 (Vidéo)", callback_data=f"format_mp4_{video_id}")]
+                [InlineKeyboardButton(f"MP4 (Vidéo - {resolution})", callback_data=f"format_mp4_{video_id}_{resolution}")]
             ]
             await query.edit_message_text(
                 "*réfléchit* Dans quel format souhaites-tu cette vidéo ?",
@@ -511,11 +382,13 @@ async def handle_callback(update: Update, context: CallbackContext):
             )
 
         elif query.data.startswith('format_'):
-            parts = query.data.split('_', 2)
-            if len(parts) != 3:
+            parts = query.data.split('_', 3)
+            if len(parts) < 3:
                 raise ValueError("Format de callback incorrect")
 
-            _, format_type, video_id = parts
+            _, format_type, video_id = parts[:3]
+            resolution = parts[3] if len(parts) > 3 else None
+
             if format_type not in ['mp3', 'mp4']:
                 raise ValueError("Format non supporté")
 
@@ -523,38 +396,38 @@ async def handle_callback(update: Update, context: CallbackContext):
 
             # Message de progression
             progress_msg = await query.edit_message_text(
-                "*commence le téléchargement* Préparation...",
+                "*commence le téléchargement*\n_Préparation..._",
                 parse_mode='Markdown'
             )
 
             try:
-                # Téléchargement avec timeout
+                # Téléchargement avec timeout et résolution spécifique
                 file_path = await asyncio.wait_for(
-                    media_handler.download_youtube_video(url, format_type),
+                    media_handler.download_youtube_video(url, format_type, resolution),
                     timeout=300  # 5 minutes maximum
                 )
 
                 if not file_path:
                     await progress_msg.edit_text(
-                        "*fronce les sourcils* La vidéo n'est pas accessible. Essayez une vidéo plus courte ou de qualité inférieure.",
+                        "*fronce les sourcils* La vidéo n'est pas accessible.",
                         parse_mode='Markdown'
                     )
                     return
 
-                await progress_msg.edit_message_text(
-                    "*prépare l'envoi* Fichier téléchargé, vérification de la taille...",
+                await progress_msg.edit_text(
+                    "*prépare l'envoi*\n_Vérification du fichier..._",
                     parse_mode='Markdown'
                 )
 
+                # Envoi du fichier
                 try:
                     with open(file_path, 'rb') as f:
                         file_size = os.path.getsize(file_path)
                         size_mb = file_size / (1024 * 1024)
 
-                        if size_mb > 50:  # 50MB
-                            error_msg = f"Le fichier est trop volumineux pour Telegram ({size_mb:.1f}MB > 50MB). Essayez une vidéo plus courte."
+                        if size_mb > 50:  # Limite Telegram de 50MB
                             await progress_msg.edit_text(
-                                f"*semble désolé* {error_msg}",
+                                f"*semble désolé* Le fichier est trop volumineux ({size_mb:.1f}MB > 50MB).",
                                 parse_mode='Markdown'
                             )
                             return
@@ -562,15 +435,15 @@ async def handle_callback(update: Update, context: CallbackContext):
                         if format_type == 'mp3':
                             await query.message.reply_audio(
                                 audio=f,
-                                caption=f"*range le fichier* Voici ton audio. (Taille: {size_mb:.1f}MB)",
+                                caption=f"*range le fichier* Voici ton audio. ({size_mb:.1f}MB)",
                                 parse_mode='Markdown'
                             )
                         else:
                             await query.message.reply_video(
                                 video=f,
-                                caption=f"*range le fichier* Voici ta vidéo. (Taille: {size_mb:.1f}MB)",
-                                supports_streaming=True,
-                                parse_mode='Markdown'
+                                caption=f"*range le fichier* Voici ta vidéo. ({size_mb:.1f}MB)",
+                                parse_mode='Markdown',
+                                supports_streaming=True
                             )
 
                     await progress_msg.edit_text(
@@ -579,46 +452,28 @@ async def handle_callback(update: Update, context: CallbackContext):
                     )
 
                 except TelegramError as te:
-                    logger.error(f"Erreur Telegram lors de l'envoi du fichier: {te}")
+                    logger.error(f"Erreur Telegram lors de l'envoi: {te}")
                     await progress_msg.edit_text(
-                        "*semble désolé* Impossible d'envoyer le fichier. Essayez une autre vidéo.",
+                        "*semble désolé* Impossible d'envoyer le fichier.",
                         parse_mode='Markdown'
                     )
-
-                finally:
-                    # Nettoyage des fichiers
-                    media_handler.cleanup(os.path.dirname(file_path))
 
             except asyncio.TimeoutError:
                 await progress_msg.edit_text(
-                    "*semble frustré* Le téléchargement prend trop de temps. Essayez une vidéo plus courte.",
+                    "*semble frustré* Le téléchargement prend trop de temps.",
                     parse_mode='Markdown'
                 )
             except Exception as e:
-                error_msg = str(e)
-                if "trop volumineux" in error_msg.lower():
-                    await progress_msg.edit_text(
-                        f"*ajuste ses lunettes* {error_msg}. Essayez une vidéo plus courte ou de qualité inférieure.",
-                        parse_mode='Markdown'
-                    )
-                else:
-                    logger.error(f"Erreur lors du téléchargement/envoi: {e}")
-                    await progress_msg.edit_text(
-                        "*semble troublé* Une erreur est survenue lors du traitement du fichier.",
-                        parse_mode='Markdown'
-                    )
+                logger.error(f"Erreur lors du téléchargement: {e}")
+                await progress_msg.edit_text(
+                    "*semble troublé* Une erreur est survenue.",
+                    parse_mode='Markdown'
+                )
 
-    except ValueError as ve:
-        logger.error(f"Erreur de format dans handle_callback: {ve}")
-        await query.message.reply_text(
-            "*fronce les sourcils* Je ne comprends pas cette requête.",
-            parse_mode='Markdown'
-        )
     except Exception as e:
         logger.error(f"Erreur dans handle_callback: {e}")
-        logger.exception("Détails de l'erreur:")
         await query.message.reply_text(
-            "*semble troublé* Je ne peux pas traiter cette requête pour le moment.",
+            "*semble troublé* Je ne peux pas traiter cette requête.",
             parse_mode='Markdown'
         )
 

@@ -18,7 +18,6 @@ from handlers import (
     help_command,
     menu_command,
     search_command,
-    image_command,
     yt_command,
     fiche_command,
     handle_message,
@@ -84,7 +83,6 @@ async def main():
             ('help', help_command),
             ('menu', menu_command),
             ('search', search_command),
-            ('image', image_command),
             ('yt', yt_command),
             ('fiche', fiche_command)
         ]

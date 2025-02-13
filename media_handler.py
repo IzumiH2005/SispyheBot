@@ -1,128 +1,153 @@
 import os
 import asyncio
 import logging
-import httpx
-from typing import List, Optional
 import tempfile
 import time
-from PIL import Image
-import io
+from typing import List, Dict, Optional, Any
+import yt_dlp
 
 logger = logging.getLogger(__name__)
 
 class MediaHandler:
     def __init__(self):
-        """Initialise le gestionnaire de médias"""
+        """Initialize the media handler with a temporary directory"""
         self.temp_dir = tempfile.mkdtemp(prefix='sisyphe_media_')
-        logger.info(f"[DEBUG] Dossier temporaire créé: {self.temp_dir}")
+        logger.info(f"Temp directory created: {self.temp_dir}")
 
-        # Formats supportés
-        self.supported_formats = {'JPEG', 'JPG', 'PNG', 'GIF', 'WEBP'}
-        self.max_size = 5 * 1024 * 1024  # 5MB
-        self.target_size = 1600  # px
-
-        # Domaines autorisés pour les images
-        self.allowed_domains = {'zerochan.net', 'pinterest.com', 'pinimg.com'}
-
-    async def download_image(self, url: str) -> Optional[str]:
-        """Télécharge et traite une image"""
+    async def search_youtube(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        """Search YouTube videos with yt-dlp"""
         try:
-            logger.info(f"[DEBUG] Téléchargement depuis: {url}")
+            logger.info(f"Searching YouTube for: {query}")
 
-            # Vérifier le domaine
-            domain = url.split('/')[2].lower()
-            if not any(allowed in domain for allowed in self.allowed_domains):
-                logger.warning(f"[DEBUG] Domaine non autorisé: {domain}")
-                return None
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'extract_flat': True,
+                'default_search': 'ytsearch',
+                'format': 'best'
+            }
 
-            # Télécharger l'image
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                response = await client.get(url)
-                response.raise_for_status()
+            # Add max_results to search query
+            search_query = f"ytsearch{max_results}:{query}"
 
-                # Créer l'objet Image
-                img = Image.open(io.BytesIO(response.content))
+            videos = []
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # Execute in a thread pool to avoid blocking
+                results = await asyncio.to_thread(ydl.extract_info, search_query, download=False)
 
-                # Vérifier le format
-                if not img.format:
-                    logger.warning("[DEBUG] Format non détecté")
-                    return None
+                if 'entries' in results:
+                    for entry in results['entries']:
+                        if not entry:
+                            continue
 
-                format_name = img.format.upper()
-                if format_name not in self.supported_formats:
-                    if format_name == 'WEBP':
-                        img = img.convert('RGB')
-                        format_name = 'JPEG'
-                    else:
-                        logger.warning(f"[DEBUG] Format non supporté: {format_name}")
-                        return None
+                        videos.append({
+                            'title': entry.get('title', 'Unknown Title'),
+                            'url': entry.get('url', ''),
+                            'duration': entry.get('duration', 0),
+                            'duration_str': self._format_duration(entry.get('duration', 0))
+                        })
 
-                # Redimensionner si nécessaire
-                if max(img.size) > self.target_size:
-                    ratio = self.target_size / max(img.size)
-                    new_size = tuple(int(dim * ratio) for dim in img.size)
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
-                    logger.info(f"[DEBUG] Redimensionné à: {new_size}")
-
-                # Sauvegarder l'image
-                ext = '.jpg' if format_name == 'JPEG' else f'.{format_name.lower()}'
-                temp_path = os.path.join(self.temp_dir, f"img_{int(time.time())}_{os.urandom(4).hex()}{ext}")
-
-                # Optimiser selon le format
-                save_opts = {}
-                if format_name in ('JPEG', 'JPG'):
-                    save_opts = {'quality': 85, 'optimize': True}
-                elif format_name == 'PNG':
-                    save_opts = {'optimize': True}
-                else:
-                    save_opts = {}
-
-                img.save(temp_path, format=format_name, **save_opts)
-
-                # Vérifier la taille finale
-                if os.path.getsize(temp_path) > self.max_size:
-                    logger.warning("[DEBUG] Image trop volumineuse après optimisation")
-                    os.remove(temp_path)
-                    return None
-
-                logger.info(f"[DEBUG] Image sauvegardée: {temp_path}")
-                return temp_path
+            logger.info(f"Found {len(videos)} videos")
+            return videos
 
         except Exception as e:
-            logger.error(f"[DEBUG] Erreur téléchargement: {str(e)}")
-            return None
-
-    async def download_images(self, urls: List[str]) -> List[str]:
-        """Télécharge plusieurs images"""
-        if not urls:
+            logger.error(f"Error searching YouTube: {e}")
             return []
 
-        valid_paths = []
-        for url in urls:
-            try:
-                if path := await self.download_image(url):
-                    valid_paths.append(path)
-                await asyncio.sleep(0.5)  # Délai entre les téléchargements
-            except Exception as e:
-                logger.error(f"[DEBUG] Erreur: {str(e)}")
-                continue
+    async def get_video_info(self, url: str) -> Dict[str, Any]:
+        """Get video information using yt-dlp"""
+        try:
+            ydl_opts = {
+                'quiet': True,
+                'no_warnings': True,
+                'format': 'best'
+            }
 
-        return valid_paths
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                return {
+                    'title': info.get('title', 'Unknown Title'),
+                    'duration': info.get('duration', 0),
+                    'format': info.get('format', '')
+                }
+
+        except Exception as e:
+            logger.error(f"Error getting video info: {e}")
+            return {}
+
+    async def download_youtube_video(self, url: str, format_type: str, resolution: Optional[str] = None) -> Optional[str]:
+        """Download YouTube video in specified format and resolution"""
+        try:
+            logger.info(f"Downloading {url} in {format_type} format")
+
+            timestamp = int(time.time())
+            temp_path = os.path.join(self.temp_dir, f"video_{timestamp}")
+
+            if format_type == 'mp3':
+                ydl_opts = {
+                    'format': 'bestaudio/best',
+                    'postprocessors': [{
+                        'key': 'FFmpegExtractAudio',
+                        'preferredcodec': 'mp3',
+                        'preferredquality': '192',
+                    }],
+                    'outtmpl': f"{temp_path}.%(ext)s",
+                    'quiet': True,
+                    'no_warnings': True
+                }
+                final_path = f"{temp_path}.mp3"
+            else:  # mp4
+                video_format = f"bestvideo[height<={resolution[:-1]}]+bestaudio/best[height<={resolution[:-1]}]"
+                ydl_opts = {
+                    'format': video_format,
+                    'merge_output_format': 'mp4',
+                    'outtmpl': f"{temp_path}.%(ext)s",
+                    'quiet': True,
+                    'no_warnings': True
+                }
+                final_path = f"{temp_path}.mp4"
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                await asyncio.to_thread(ydl.download, [url])
+
+            if os.path.exists(final_path):
+                logger.info(f"Download successful: {final_path}")
+                return final_path
+
+            logger.error("Download failed: File not found")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error downloading video: {e}")
+            return None
 
     def cleanup(self, specific_path: Optional[str] = None):
-        """Nettoie les fichiers temporaires"""
+        """Clean up temporary files"""
         try:
             if specific_path and os.path.exists(specific_path):
                 os.remove(specific_path)
-                logger.info(f"[DEBUG] Supprimé: {specific_path}")
+                logger.info(f"Removed file: {specific_path}")
             elif os.path.exists(self.temp_dir):
                 for file in os.listdir(self.temp_dir):
                     try:
                         path = os.path.join(self.temp_dir, file)
                         if os.path.isfile(path):
                             os.remove(path)
-                            logger.info(f"[DEBUG] Supprimé: {path}")
+                            logger.info(f"Removed file: {path}")
                     except Exception as e:
-                        logger.error(f"[DEBUG] Erreur nettoyage {path}: {str(e)}")
+                        logger.error(f"Error cleaning up {path}: {e}")
         except Exception as e:
-            logger.error(f"[DEBUG] Erreur nettoyage: {str(e)}")
+            logger.error(f"Error in cleanup: {e}")
+
+    def _format_duration(self, seconds: int) -> str:
+        """Format duration in seconds to HH:MM:SS"""
+        if not seconds:
+            return "Unknown"
+
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        seconds = seconds % 60
+
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
