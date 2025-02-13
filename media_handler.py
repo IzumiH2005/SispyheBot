@@ -21,46 +21,70 @@ class MediaHandler:
 
             ydl_opts = {
                 'quiet': True,
-                'no_warnings': True,
-                'extract_flat': True,
+                'extract_flat': 'in_playlist',
                 'default_search': 'ytsearch',
-                'format': 'best'
+                'ignoreerrors': True,
+                'no_warnings': True
             }
 
-            # Add max_results to search query
-            search_query = f"ytsearch{max_results}:{query}"
+            try:
+                # Construct the search URL
+                search_url = f"ytsearch{max_results}:{query}"
+                logger.debug(f"Search URL: {search_url}")
 
-            videos = []
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                # Execute in a thread pool to avoid blocking
-                results = await asyncio.to_thread(ydl.extract_info, search_query, download=False)
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    logger.debug("Starting YouTube search...")
+                    results = await asyncio.to_thread(
+                        ydl.extract_info,
+                        search_url,
+                        download=False
+                    )
 
-                if 'entries' in results:
-                    for entry in results['entries']:
+                    if not results:
+                        logger.warning("No results found")
+                        return []
+
+                    videos = []
+                    entries = results.get('entries', [])
+                    logger.info(f"Found {len(entries)} entries")
+
+                    for entry in entries:
                         if not entry:
                             continue
 
-                        videos.append({
-                            'title': entry.get('title', 'Unknown Title'),
-                            'url': entry.get('url', ''),
-                            'duration': entry.get('duration', 0),
-                            'duration_str': self._format_duration(entry.get('duration', 0))
-                        })
+                        try:
+                            video_info = {
+                                'title': entry.get('title', 'Unknown Title'),
+                                'url': entry.get('webpage_url', entry.get('url', '')),
+                                'duration': entry.get('duration'),
+                                'duration_str': self._format_duration(entry.get('duration', 0))
+                            }
+                            logger.debug(f"Processed video: {video_info['title']}")
+                            videos.append(video_info)
 
-            logger.info(f"Found {len(videos)} videos")
-            return videos
+                        except Exception as e:
+                            logger.error(f"Error processing video entry: {str(e)}")
+                            continue
+
+                    return videos[:max_results]
+
+            except Exception as e:
+                logger.error(f"Error during YouTube search operation: {str(e)}")
+                raise
 
         except Exception as e:
-            logger.error(f"Error searching YouTube: {e}")
+            logger.error(f"Error in search_youtube: {str(e)}")
             return []
 
     async def get_video_info(self, url: str) -> Dict[str, Any]:
         """Get video information using yt-dlp"""
         try:
+            logger.info(f"Getting info for video: {url}")
+
             ydl_opts = {
                 'quiet': True,
                 'no_warnings': True,
-                'format': 'best'
+                'extract_flat': True
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -72,7 +96,7 @@ class MediaHandler:
                 }
 
         except Exception as e:
-            logger.error(f"Error getting video info: {e}")
+            logger.error(f"Error getting video info: {str(e)}")
             return {}
 
     async def download_youtube_video(self, url: str, format_type: str, resolution: Optional[str] = None) -> Optional[str]:
@@ -80,8 +104,17 @@ class MediaHandler:
         try:
             logger.info(f"Downloading {url} in {format_type} format")
 
+            # Get video info first to get the title
+            info = await self.get_video_info(url)
+            title = info.get('title', 'video')
+
+            # Clean the title to make it filesystem-friendly
+            clean_title = "".join(c for c in title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+            if len(clean_title) > 100:  # Limit title length
+                clean_title = clean_title[:100]
+
             timestamp = int(time.time())
-            temp_path = os.path.join(self.temp_dir, f"video_{timestamp}")
+            temp_path = os.path.join(self.temp_dir, f"{clean_title}_{timestamp}")
 
             if format_type == 'mp3':
                 ydl_opts = {
@@ -97,7 +130,11 @@ class MediaHandler:
                 }
                 final_path = f"{temp_path}.mp3"
             else:  # mp4
-                video_format = f"bestvideo[height<={resolution[:-1]}]+bestaudio/best[height<={resolution[:-1]}]"
+                if resolution:
+                    video_format = f"bestvideo[height<={resolution[:-1]}]+bestaudio/best[height<={resolution[:-1]}]"
+                else:
+                    video_format = 'best'
+
                 ydl_opts = {
                     'format': video_format,
                     'merge_output_format': 'mp4',
@@ -106,6 +143,8 @@ class MediaHandler:
                     'no_warnings': True
                 }
                 final_path = f"{temp_path}.mp4"
+
+            logger.debug(f"Download options: {ydl_opts}")
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 await asyncio.to_thread(ydl.download, [url])
@@ -118,7 +157,7 @@ class MediaHandler:
             return None
 
         except Exception as e:
-            logger.error(f"Error downloading video: {e}")
+            logger.error(f"Error downloading video: {str(e)}")
             return None
 
     def cleanup(self, specific_path: Optional[str] = None):
@@ -129,25 +168,31 @@ class MediaHandler:
                 logger.info(f"Removed file: {specific_path}")
             elif os.path.exists(self.temp_dir):
                 for file in os.listdir(self.temp_dir):
+                    file_path = os.path.join(self.temp_dir, file)
                     try:
-                        path = os.path.join(self.temp_dir, file)
-                        if os.path.isfile(path):
-                            os.remove(path)
-                            logger.info(f"Removed file: {path}")
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                            logger.info(f"Removed file: {file_path}")
                     except Exception as e:
-                        logger.error(f"Error cleaning up {path}: {e}")
+                        logger.error(f"Error cleaning up {file_path}: {e}")
         except Exception as e:
             logger.error(f"Error in cleanup: {e}")
 
     def _format_duration(self, seconds: int) -> str:
         """Format duration in seconds to HH:MM:SS"""
-        if not seconds:
+        try:
+            if not seconds or not isinstance(seconds, (int, float)):
+                return "Unknown"
+
+            seconds = int(seconds)
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            secs = seconds % 60
+
+            if hours > 0:
+                return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+            return f"{minutes:02d}:{secs:02d}"
+
+        except Exception as e:
+            logger.error(f"Error formatting duration: {e}")
             return "Unknown"
-
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        seconds = seconds % 60
-
-        if hours > 0:
-            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-        return f"{minutes:02d}:{seconds:02d}"
