@@ -20,6 +20,7 @@ from handlers import (
     search_command,
     yt_command,
     fiche_command,
+    ebook_command,  # Add this line
     handle_message,
     handle_callback
 )
@@ -84,7 +85,8 @@ async def main():
             ('menu', menu_command),
             ('search', search_command),
             ('yt', yt_command),
-            ('fiche', fiche_command)
+            ('fiche', fiche_command),
+            ('ebook', ebook_command)  # Add this line
         ]
 
         for command, handler in handlers:

@@ -10,6 +10,7 @@ from perplexity_client import PerplexityClient
 from media_handler import MediaHandler
 import re
 from fiche import FicheClient
+from ebook import EbookClient  # Add this line with other imports
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ admin_manager = AdminManager()
 perplexity_client = PerplexityClient()
 media_handler = MediaHandler()
 fiche_client = FicheClient()
+ebook_client = EbookClient()
 
 # Mise à jour des commandes sans /image
 COMMANDS = {
@@ -26,6 +28,7 @@ COMMANDS = {
     'search': 'Rechercher des informations (ex: /search philosophie grecque)',
     'yt': 'Rechercher et télécharger une vidéo YouTube',
     'fiche': 'Créer une fiche détaillée d\'anime/série (ex: /fiche Naruto)',
+    'ebook': 'Rechercher et télécharger un livre (ex: /ebook les misérables fr)',
     'menu': 'Afficher ce menu d\'aide'
 }
 
@@ -414,7 +417,7 @@ async def handle_callback(update: Update, context: CallbackContext):
                     )
                     return
 
-                await progress_msg.edit_text(
+                await progress_msg.edit_message_text(
                     "*prépare l'envoi*\n_Vérification du fichier..._",
                     parse_mode='Markdown'
                 )
@@ -647,3 +650,101 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Nettoyer les fichiers temporaires si nécessaire
         if 'image_paths' in locals():
             media_handler.cleanup()
+
+async def ebook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gère la commande /ebook"""
+    progress_message = None
+    try:
+        # Get the command text
+        command = ' '.join(context.args) if context.args else None
+        if not command:
+            if update.message.reply_to_message and update.message.reply_to_message.text:
+                command = update.message.reply_to_message.text
+            else:
+                await update.message.reply_text(
+                    "*lève un sourcil* Quel livre souhaites-tu trouver ? Utilise /ebook [titre] [langue]",
+                    parse_mode='Markdown'
+                )
+                return
+
+        user_id = update.effective_user.id
+        logger.info(f"Livre demandé par l'utilisateur {user_id}: {command}")
+
+        # Message de recherche en cours
+        progress_message = await update.message.reply_text(
+            "*consulte sa bibliothèque*\n_Recherche du livre en cours..._",
+            parse_mode='Markdown'
+        )
+
+        # Indiquer que le bot est en train d'écrire
+        await update.message.chat.send_action(action="typing")
+
+        try:
+            # Limite de temps pour la recherche et le téléchargement
+            result = await asyncio.wait_for(
+                ebook_client.search_and_download_ebook(command),
+                timeout=60.0  # Plus long car inclut le téléchargement
+            )
+
+            if isinstance(result, dict) and "error" in result:
+                error_msg = result["error"]
+                logger.error(f"Erreur lors de la recherche du livre: {error_msg}")
+                await progress_message.edit_text(
+                    f"*semble contrarié* {error_msg}",
+                    parse_mode='Markdown'
+                )
+                return
+
+            # Si succès, envoyer le fichier
+            if result.get("success"):
+                file_path = result["file_path"]
+                title = result["title"]
+
+                await progress_message.edit_text(
+                    "*prépare l'envoi du livre*",
+                    parse_mode='Markdown'
+                )
+
+                try:
+                    with open(file_path, 'rb') as f:
+                        await update.message.reply_document(
+                            document=f,
+                            filename=os.path.basename(file_path),
+                            caption=f"*présente le livre* Voici '{title}'",
+                            parse_mode='Markdown'
+                        )
+
+                    # Supprimer le fichier temporaire après l'envoi
+                    try:
+                        os.remove(file_path)
+                    except Exception as e:
+                        logger.error(f"Erreur lors de la suppression du fichier temporaire: {e}")
+
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'envoi du fichier: {e}")
+                    await progress_message.edit_text(
+                        "*fronce les sourcils* Impossible d'envoyer le fichier.",
+                        parse_mode='Markdown'
+                    )
+            else:
+                await progress_message.edit_text(
+                    "*semble déçu* Je n'ai pas pu télécharger le livre.",
+                    parse_mode='Markdown'
+                )
+
+        except asyncio.TimeoutError:
+            logger.error("Timeout lors de la recherche du livre")
+            await progress_message.edit_text(
+                "*fronce les sourcils* La recherche prend trop de temps. Essaie une autre requête.",
+                parse_mode='Markdown'
+            )
+
+    except Exception as e:
+        logger.error(f"Erreur dans ebook_command: {e}")
+        logger.exception("Détails de l'erreur:")
+        error_message = "*semble perplexe* Je ne peux pas traiter cette demande pour le moment."
+
+        if progress_message:
+            await progress_message.edit_text(error_message, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(error_message, parse_mode='Markdown')

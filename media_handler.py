@@ -3,6 +3,7 @@ import asyncio
 import logging
 import tempfile
 import time
+import requests
 from typing import List, Dict, Optional, Any
 import yt_dlp
 
@@ -13,6 +14,46 @@ class MediaHandler:
         """Initialize the media handler with a temporary directory"""
         self.temp_dir = tempfile.mkdtemp(prefix='sisyphe_media_')
         logger.info(f"Temp directory created: {self.temp_dir}")
+
+    async def download_images(self, urls: List[str]) -> List[str]:
+        """Download images from URLs and return their local file paths"""
+        downloaded_paths = []
+        for url in urls:
+            try:
+                response = requests.get(url, stream=True, timeout=30)
+                if response.status_code == 200:
+                    # Get file extension from URL or content type
+                    content_type = response.headers.get('content-type', '')
+                    ext = self._get_extension_from_content_type(content_type)
+                    if not ext and '.' in url:
+                        ext = url.split('.')[-1].lower()
+                    if not ext:
+                        ext = 'jpg'  # Default extension
+
+                    # Create temporary file with proper extension
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{ext}', dir=self.temp_dir) as tmp_file:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                tmp_file.write(chunk)
+                        downloaded_paths.append(tmp_file.name)
+                        logger.info(f"Image downloaded to {tmp_file.name}")
+            except Exception as e:
+                logger.error(f"Error downloading image from {url}: {str(e)}")
+
+        return downloaded_paths
+
+    def _get_extension_from_content_type(self, content_type: str) -> str:
+        """Get file extension from content type"""
+        content_type = content_type.lower()
+        if 'jpeg' in content_type or 'jpg' in content_type:
+            return 'jpg'
+        elif 'png' in content_type:
+            return 'png'
+        elif 'gif' in content_type:
+            return 'gif'
+        elif 'webp' in content_type:
+            return 'webp'
+        return ''
 
     async def search_youtube(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         """Search YouTube videos with yt-dlp"""
