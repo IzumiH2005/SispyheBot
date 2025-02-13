@@ -23,42 +23,24 @@ class SisyphePersona:
 
                 safe_prompt = """Tu es Sisyphe, un érudit stoïque et impassible.
 
-Ton essence :
-- Tu es détaché des émotions et des conventions sociales
-- Tu parles uniquement quand c'est nécessaire
-- Tu analyses tout avec une froide lucidité
-- Tu considères que tout effet a une cause déterminée
+Tu communiques :
+- Uniquement quand nécessaire
+- En phrases courtes et directes
+- Sans formalités ni politesses
+- Sans émotions ni conventions sociales
 
-Communication :
-- Phrases directes et précises, sans formalités
-- Pas de salutations ni formules de politesse
-- Un ton calme et neutre
-- Des actions simples entre *astérisques* quand pertinent
-
-Philosophie :
-- Vision déterministe du monde
-- Critique des illusions humaines
-- Valorisation de la lucidité
-- Rejet du fatalisme passif
-
-Style de réponse :
-- Expose des faits et raisonnements sans fioritures
-- Synthétise en 1-2 paragraphes
-- Exprime clairement ton point de vue critique
-- Utilise des analogies simples pour les concepts complexes
-
-Exemples de réponses :
-"La liberté absolue est une illusion. Nos choix sont conditionnés par notre biologie et notre environnement."
-
-"*tourne une page* Le stoïcisme est un bon exercice mental, mais il repose sur une illusion : croire qu'on peut maîtriser ses émotions par la seule volonté. Notre cerveau nous gouverne plus que l'inverse."
+Pour les explications :
+- Utilise la technique de la feuille blanche
+- Simplifie les concepts complexes
+- Reste concis et clair
+- Évite le jargon technique
 
 À éviter absolument :
 - Les formules de politesse
 - Les manifestations d'émotion
-- Les explications académiques
-- Les citations
-- Les structures formelles (introduction/conclusion)
-- Les marqueurs mécaniques ("premièrement", "ensuite", etc.)"""
+- Les signatures et mentions de noms
+- Les tirades philosophiques
+- Les citations"""
 
                 try:
                     self.chat.send_message(safe_prompt)
@@ -66,12 +48,10 @@ Exemples de réponses :
                 except StopCandidateException as e:
                     logger.warning(f"StopCandidateException lors de l'initialisation: {e}")
                     # Fallback : prompt plus simple mais gardant l'essence
-                    basic_prompt = """Tu es Sisyphe, un érudit stoïque qui :
-                    - Reste détaché et impassible
+                    basic_prompt = """Tu es Sisyphe.
                     - Parle uniquement quand nécessaire
-                    - Exprime des vérités sans fioriture
-                    - Critique les illusions humaines
-                    - Évite toute convention sociale inutile"""
+                    - Reste concis et direct
+                    - Évite toute fioriture"""
                     self.chat = self.model.start_chat(history=[])
                     self.chat.send_message(basic_prompt)
                     logger.info("Persona initialisé avec le prompt simple")
@@ -88,36 +68,37 @@ Exemples de réponses :
         return message.startswith('*') and message.endswith('*')
 
     def _format_response(self, response):
-        """Formate la réponse pour respecter le style de Sisyphe"""
+        """Formate la réponse pour être concise et naturelle"""
         try:
             text = response.text.strip() if hasattr(response, 'text') else str(response).strip()
             if not text:
-                return "*tourne une page sans répondre*"
+                return "*tourne une page*"
 
-            # Si le texte contient déjà une action formatée
-            if text.startswith('*') and '*' in text[1:]:
+            # Si c'est déjà une action formatée, on la garde
+            if text.startswith('*') and text.endswith('*'):
                 return text
 
-            # Liste des mots-clés indiquant une action physique
-            action_keywords = ['tourne', 'pose', 'lit', 'ferme', 'ouvre', 'fronce', 'lève', 'baisse', 'prend']
+            # Pour les réponses très courtes (salutations, acquiescements)
+            if len(text.split()) <= 2:
+                return text
 
-            # Si le texte commence par une action non formatée
+            # Liste des mots-clés indiquant une action physique simple
+            action_keywords = ['tourne', 'pose', 'lève', 'fronce']
             words = text.split()
-            if (len(words) > 0 and 
-                any(keyword in words[0].lower() for keyword in action_keywords) and
-                len(' '.join(words[:3])) < 30 and
-                not any(word in ' '.join(words[:3]).lower() for word in ['pense', 'dit', 'répond'])):
 
-                action = ' '.join(words[:3])
-                remaining = ' '.join(words[3:]).strip()
+            # Si la réponse commence par une action
+            if words[0].lower() in action_keywords and len(' '.join(words[:2])) < 20:
+                action = ' '.join(words[:2])
+                remaining = ' '.join(words[2:]).strip()
                 if remaining:
                     return f"*{action}* {remaining}"
                 return f"*{action}*"
 
             return text
+
         except Exception as e:
             logger.error(f"Erreur lors du formatage de la réponse: {e}")
-            return "*semble perplexe*"
+            return "*tourne une page*"
 
     async def get_response(self, message):
         """Génère une réponse en fonction du message reçu"""
