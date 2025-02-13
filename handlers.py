@@ -10,7 +10,6 @@ from perplexity_client import PerplexityClient
 from media_handler import MediaHandler
 import re
 from fiche import FicheClient
-from ebook import EbookClient  # Add import at the top with other imports
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +18,14 @@ admin_manager = AdminManager()
 perplexity_client = PerplexityClient()
 media_handler = MediaHandler()
 fiche_client = FicheClient()
-ebook_client = EbookClient()  # Add new client
 
-# Update COMMANDS dictionary to include ebook command
+# Mise à jour des commandes sans /image
 COMMANDS = {
     'start': 'Débuter une conversation avec Sisyphe',
     'help': 'Obtenir de l\'aide sur l\'utilisation du bot',
     'search': 'Rechercher des informations (ex: /search philosophie grecque)',
     'yt': 'Rechercher et télécharger une vidéo YouTube',
     'fiche': 'Créer une fiche détaillée d\'anime/série (ex: /fiche Naruto)',
-    'ebook': 'Rechercher et télécharger un livre (ex: /ebook les misérables fr)',
     'menu': 'Afficher ce menu d\'aide'
 }
 
@@ -286,6 +283,8 @@ Instructions de formatage :
             await progress_message.edit_text(error_message, parse_mode='Markdown')
         else:
             await update.message.reply_text(error_message, parse_mode='Markdown')
+
+# Suppression de la fonction image_command
 
 
 async def yt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -648,101 +647,3 @@ async def fiche_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Nettoyer les fichiers temporaires si nécessaire
         if 'image_paths' in locals():
             media_handler.cleanup()
-
-# Add new ebook_command function after other command functions
-async def ebook_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gère la commande /ebook avec spécification de la langue"""
-    progress_message = None
-    try:
-        # Vérifier les arguments
-        if not context.args:
-            await update.message.reply_text(
-                "*lève un sourcil* Tu dois spécifier le titre du livre et la langue (ex: /ebook les misérables fr)",
-                parse_mode='Markdown'
-            )
-            return
-
-        # Le dernier argument est la langue, le reste est le titre
-        args = context.args
-        if len(args) < 2:
-            await update.message.reply_text(
-                "*semble perplexe* Format incorrect. Utilise : /ebook [titre] [langue]",
-                parse_mode='Markdown'
-            )
-            return
-
-        lang = args[-1].lower()  # Dernier argument est la langue
-        title = ' '.join(args[:-1])  # Tout le reste est le titre
-
-        # Vérifier la langue
-        if lang not in ['fr', 'en']:  # Ajoutez d'autres langues au besoin
-            await update.message.reply_text(
-                "*fronce les sourcils* La langue doit être 'fr' pour français ou 'en' pour anglais.",
-                parse_mode='Markdown'
-            )
-            return
-
-        user_id = update.effective_user.id
-        logger.info(f"Recherche de livre demandée par l'utilisateur {user_id}: {title} en {lang}")
-
-        # Message de recherche en cours
-        progress_message = await update.message.reply_text(
-            "*consulte sa bibliothèque*\n_Recherche du livre en cours..._",
-            parse_mode='Markdown'
-        )
-
-        try:
-            # Limite de temps pour la recherche et le téléchargement
-            result = await asyncio.wait_for(
-                ebook_client.search_and_download(title, lang),
-                timeout=60.0
-            )
-
-            if isinstance(result, dict) and "error" in result:
-                error_msg = result["error"]
-                logger.error(f"Erreur lors de la recherche du livre: {error_msg}")
-                await progress_message.edit_text(
-                    f"*semble contrarié* {error_msg}",
-                    parse_mode='Markdown'
-                )
-                return
-
-            if "success" in result and result["success"]:
-                # Envoi du fichier
-                try:
-                    with open(result["file_path"], 'rb') as f:
-                        await update.message.reply_document(
-                            document=f,
-                            filename=result["filename"],
-                            caption="*tend le livre avec délicatesse*",
-                            parse_mode='Markdown'
-                        )
-                    await progress_message.delete()
-                except Exception as e:
-                    logger.error(f"Erreur lors de l'envoi du fichier: {e}")
-                    await progress_message.edit_text(
-                        "*semble désolé* Impossible d'envoyer le fichier.",
-                        parse_mode='Markdown'
-                    )
-            else:
-                await progress_message.edit_text(
-                    "*fronce les sourcils* Je n'ai pas trouvé ce livre.",
-                    parse_mode='Markdown'
-                )
-
-        except asyncio.TimeoutError:
-            logger.error("Timeout lors de la recherche du livre")
-            await progress_message.edit_text(
-                "*fronce les sourcils* La recherche prend trop de temps. Essaie une autre requête.",
-                parse_mode='Markdown'
-            )
-
-    except Exception as e:
-        logger.error(f"Erreur dans ebook_command: {e}")
-        logger.exception("Détails de l'erreur:")
-        error_message = "*semble perplexe* Je ne peux pas rechercher ce livre pour le moment."
-
-        if progress_message:
-            await progress_message.edit_text(error_message, parse_mode='Markdown')
-        else:
-            await update.message.reply_text(error_message, parse_mode='Markdown')
