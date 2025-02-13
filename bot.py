@@ -21,7 +21,8 @@ from handlers import (
     yt_command,
     fiche_command,
     handle_message,
-    handle_callback
+    handle_callback,
+    ebook_command
 )
 
 # Application de nest_asyncio pour gérer les boucles d'événements imbriquées
@@ -84,7 +85,8 @@ async def main():
             ('menu', menu_command),
             ('search', search_command),
             ('yt', yt_command),
-            ('fiche', fiche_command)
+            ('fiche', fiche_command),
+            ('ebook', ebook_command)  # Ajout de la commande ebook
         ]
 
         for command, handler in handlers:
