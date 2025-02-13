@@ -5,7 +5,7 @@ channel = "stable-24_05"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "python3 -u bot.py"]
+run = ["sh", "-c", "python3 bot.py"]
 
 [workflows]
 runButton = "Project"
@@ -31,4 +31,4 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 -u bot.py"
+args = "python3 bot.py"
