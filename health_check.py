@@ -89,7 +89,7 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        port = int(os.getenv('PORT', 8080))
+        port = int(os.getenv('PORT', 5001))  # Changed default port to 5001
         logger.info(f"Starting health check server on port {port}")
         app.run(host='0.0.0.0', port=port, debug=False)
     except Exception as e:

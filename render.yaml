@@ -13,3 +13,17 @@ services:
         sync: false
       - key: FLASK_SECRET_KEY
         generateValue: true
+
+  - type: web
+    name: sisyphe-health
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 health_check.py
+    envVars:
+      - key: PORT
+        value: 5001
+      - key: FLASK_SECRET_KEY
+        fromService:
+          type: worker
+          name: sisyphe-bot
+          envVarKey: FLASK_SECRET_KEY
