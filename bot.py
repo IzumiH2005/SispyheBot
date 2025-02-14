@@ -104,7 +104,8 @@ async def main():
 
         # Attendre indéfiniment
         try:
-            await application.updater.running
+            while True:
+                await asyncio.sleep(1)  # Pause d'une seconde pour éviter une utilisation excessive du CPU
         except Exception as e:
             logger.error(f"Erreur pendant l'exécution: {e}")
 
