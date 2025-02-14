@@ -88,3 +88,7 @@ flask
 nest-asyncio
 python-telegram-bot
 trafilatura
+trafilatura
+flask
+gunicorn
+psutil
