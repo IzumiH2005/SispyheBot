@@ -2,8 +2,10 @@
 import logging
 from flask import Flask, jsonify
 import os
+import time
+from threading import Thread
 
-# Configuration du logging (removed Telegram-specific logging)
+# Configuration du logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -21,6 +23,17 @@ def health_check():
 def root():
     return jsonify({'message': 'API is running. Use /health for health check'})
 
+def run_app():
+    while True:
+        try:
+            port = int(os.getenv('PORT', 8080))
+            app.run(host='0.0.0.0', port=port)
+        except Exception as e:
+            logger.error(f"Health check crashed: {str(e)}")
+            logger.info("Restarting health check in 5 seconds...")
+            time.sleep(5)
+
 if __name__ == '__main__':
-    port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port)
+    thread = Thread(target=run_app, daemon=True)
+    thread.start()
+    thread.join()
