@@ -5,7 +5,7 @@ channel = "stable-24_05"
 
 [deployment]
 deploymentTarget = "autoscale"
-run = ["sh", "-c", "python3 bot.py"]
+run = ["sh", "-c", "python bot.py"]
 
 [workflows]
 runButton = "Project"
@@ -35,7 +35,7 @@ task = "packager.installForAll"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python3 bot.py"
+args = "python bot.py"
 
 [[workflows.workflow]]
 name = "Health Check"
@@ -50,7 +50,6 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 health_check.py"
-waitForPort = 5001
 
 [[ports]]
 localPort = 5000
