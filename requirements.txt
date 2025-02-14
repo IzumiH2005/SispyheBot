@@ -88,3 +88,8 @@ flask
 nest-asyncio
 python-telegram-bot
 trafilatura
+google-generativeai
+nest-asyncio
+python-dotenv
+python-telegram-bot
+requests
