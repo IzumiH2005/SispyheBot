@@ -44,30 +44,32 @@ logger = logging.getLogger(__name__)
 async def main():
     """Fonction principale du bot avec gestion améliorée des instances et logging"""
     try:
-        # Vérification du PID de manière plus robuste
+        # Vérification qu'une seule instance tourne
         pid_file = "/tmp/telegram_bot.pid"
 
-        # Toujours supprimer l'ancien fichier PID au démarrage
         try:
             if os.path.exists(pid_file):
-                os.remove(pid_file)
-                logger.info("Ancien fichier PID supprimé")
-        except Exception as e:
-            logger.warning(f"Erreur lors de la suppression de l'ancien PID: {str(e)}")
+                with open(pid_file, 'r') as f:
+                    old_pid = int(f.read())
+                try:
+                    os.kill(old_pid, 0)
+                    logger.error("Une instance du bot est déjà en cours d'exécution")
+                    sys.exit(1)
+                except OSError:
+                    logger.info("Ancien processus terminé, démarrage d'une nouvelle instance")
+                    pass
 
-        # Écriture du nouveau PID
-        try:
             with open(pid_file, 'w') as f:
                 f.write(str(os.getpid()))
                 logger.info(f"PID {os.getpid()} écrit dans {pid_file}")
         except Exception as e:
-            logger.error(f"Erreur lors de l'écriture du PID: {str(e)}")
-            # Continue même si on ne peut pas écrire le PID
+            logger.error(f"Erreur lors de la vérification du PID: {str(e)}")
+            sys.exit(1)
 
         # Vérifier le token Telegram
         if not TELEGRAM_TOKEN:
             logger.error("Token Telegram manquant")
-            return
+            sys.exit(1)
         logger.info("Token Telegram validé")
 
         # Création de l'application avec une meilleure gestion des timeouts
@@ -106,9 +108,11 @@ async def main():
     except TelegramError as e:
         logger.error(f"Erreur Telegram lors du démarrage: {str(e)}")
         logger.exception("Détails de l'erreur Telegram:")
+        raise
     except Exception as e:
         logger.error(f"Erreur critique lors du démarrage: {str(e)}")
         logger.exception("Détails de l'erreur:")
+        raise
     finally:
         # Nettoyage du fichier PID à la fin
         try:
