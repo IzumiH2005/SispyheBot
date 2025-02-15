@@ -46,14 +46,24 @@ def ping_bot():
     global is_bot_responding
     consecutive_failures = 0
     max_consecutive_failures = 3
+    health_check_url = 'http://127.0.0.1:5002/health'
 
     while True:
         try:
-            # Vérifie l'état du bot via l'API Telegram
+            # Vérifie l'état du bot via l'API Telegram avec un timeout plus long
             response = requests.post(
                 f'https://api.telegram.org/bot{os.getenv("TELEGRAM_TOKEN")}/getMe',
                 timeout=30
             )
+
+            # Vérifie aussi le health check
+            try:
+                health_response = requests.get(health_check_url, timeout=5)
+                if health_response.status_code == 200:
+                    logger.debug("Health check successful")
+            except:
+                logger.warning("Health check failed, but continuing")
+
             if response.status_code == 200:
                 logger.debug("Bot status check successful")
                 consecutive_failures = 0
@@ -69,11 +79,13 @@ def ping_bot():
             is_bot_responding = False
             logger.error("Bot appears to be unresponsive")
             try:
+                # Essaie de redémarrer le bot via le health check
                 requests.post('http://127.0.0.1:5002/restart', timeout=5)
             except:
                 logger.error("Failed to trigger bot restart")
 
-        time.sleep(30)  # Vérifie toutes les 30 secondes
+        # Attend moins longtemps entre les vérifications
+        time.sleep(15)  # Vérifie toutes les 15 secondes au lieu de 30
 
 def start_keep_alive():
     """Initialise le système keep-alive complet"""

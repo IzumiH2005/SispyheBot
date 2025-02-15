@@ -93,16 +93,16 @@ async def handle_network_error(update: Update, context, error: Exception):
     """Gère les erreurs réseau de manière appropriée"""
     if isinstance(error, (NetworkError, TimedOut)):
         logger.warning(f"Erreur réseau temporaire: {error}")
-        await asyncio.sleep(1)  # Attente courte avant de réessayer
+        await asyncio.sleep(1)
         return True
     return False
 
 async def main():
     """Fonction principale du bot avec meilleure gestion des erreurs"""
     restart_attempts = 0
-    max_restart_attempts = 3
+    max_restart_attempts = float('inf')  # Nombre infini de tentatives de redémarrage
 
-    while restart_attempts < max_restart_attempts:
+    while True:  # Boucle infinie pour maintenir le bot en vie
         try:
             if not TELEGRAM_TOKEN:
                 logger.error("Token Telegram manquant")
@@ -111,11 +111,11 @@ async def main():
             if await check_existing_instance():
                 return
 
-            # Démarrage du keep-alive
+            # Démarrage du keep-alive avec des paramètres plus agressifs
             start_keep_alive()
             logger.info("Service keep-alive démarré")
 
-            # Configuration de l'application
+            # Configuration de l'application avec des timeouts plus longs
             application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
             setup_handlers(application)
 
@@ -123,45 +123,44 @@ async def main():
             await application.initialize()
             await application.start()
 
-            # Configuration du polling sans timeout
+            # Configuration du polling avec des timeouts plus longs
             await application.updater.start_polling(
-                bootstrap_retries=-1,  # Réessayer indéfiniment
-                drop_pending_updates=True,
+                bootstrap_retries=-1,        # Réessayer indéfiniment
+                drop_pending_updates=True,   # Ignorer les mises à jour en attente au démarrage
                 allowed_updates=["message", "callback_query"],
-                read_timeout=None,  # Pas de timeout en lecture
-                write_timeout=None,  # Pas de timeout en écriture
-                connect_timeout=None,  # Pas de timeout en connexion
-                pool_timeout=None     # Pas de timeout pour le pool
+                read_timeout=60,            # 60 secondes timeout en lecture
+                write_timeout=60,           # 60 secondes timeout en écriture
+                connect_timeout=60,         # 60 secondes timeout en connexion
+                pool_timeout=60             # 60 secondes timeout pour le pool
             )
 
-            # Boucle principale sans timeout
+            # Boucle principale avec gestion améliorée des erreurs
             while True:
                 try:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(10)  # Vérification toutes les 10 secondes
+                    # Ping Telegram pour maintenir la connexion active
+                    await application.bot.get_me()
                 except Exception as e:
-                    if isinstance(e, (NetworkError, TimedOut)):
-                        logger.warning(f"Erreur réseau temporaire: {e}")
-                        continue
-                    raise
+                    if not isinstance(e, (NetworkError, TimedOut)):
+                        raise
+                    logger.warning(f"Erreur réseau temporaire dans la boucle principale: {e}")
+                    await asyncio.sleep(1)
+                    continue
 
         except TelegramError as e:
             logger.error(f"Erreur Telegram: {e}")
             restart_attempts += 1
-            if restart_attempts < max_restart_attempts:
-                logger.info(f"Tentative de redémarrage {restart_attempts}/{max_restart_attempts}")
-                await asyncio.sleep(5)
-                continue
-            break
+            logger.info(f"Tentative de redémarrage {restart_attempts}")
+            await asyncio.sleep(5)
+            continue
 
         except Exception as e:
             logger.error(f"Erreur critique: {e}")
             logger.exception("Détails de l'erreur:")
             restart_attempts += 1
-            if restart_attempts < max_restart_attempts:
-                logger.info(f"Tentative de redémarrage {restart_attempts}/{max_restart_attempts}")
-                await asyncio.sleep(5)
-                continue
-            break
+            logger.info(f"Tentative de redémarrage {restart_attempts}")
+            await asyncio.sleep(5)
+            continue
 
         finally:
             if 'application' in locals():
@@ -184,6 +183,10 @@ async def main():
 
 if __name__ == '__main__':
     try:
+        # Configuration de nest_asyncio pour éviter les conflits de boucles
+        import nest_asyncio
+        nest_asyncio.apply()
+
         loop = asyncio.get_event_loop()
         if loop.is_closed():
             loop = asyncio.new_event_loop()
