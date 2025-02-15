@@ -4,8 +4,10 @@ import logging
 import requests
 import json
 import os
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from threading import Thread
+from telegram import Update
+from telegram.ext import Application
 
 app = Flask(__name__)
 logger = logging.getLogger(__name__)
@@ -14,9 +16,14 @@ is_bot_responding = True
 @app.route('/')
 def home():
     """
-    Endpoint principal optimisé pour Uptime Robot
-    Renvoie un statut 200 avec des informations détaillées
+    Endpoint principal avec vérification des messages
     """
+    message = request.args.get('message', '').lower()
+    if 'sisyphe' in message:
+        try:
+            requests.post('http://127.0.0.1:5002/wake', timeout=5)
+        except:
+            pass
     status = {
         "status": "up",
         "timestamp": time.time(),

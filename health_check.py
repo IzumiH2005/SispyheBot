@@ -140,6 +140,26 @@ def root():
         }
     })
 
+@app.route('/wake', methods=['POST'])
+def wake_bot():
+    """Endpoint pour réveiller le bot"""
+    try:
+        pid_file = "/tmp/telegram_bot.pid"
+        if os.path.exists(pid_file):
+            with open(pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            try:
+                # Envoie SIGUSR1 pour réveiller le processus
+                os.kill(pid, signal.SIGUSR1)
+                logger.info(f"Signal de réveil envoyé au processus {pid}")
+                return jsonify({'status': 'success', 'message': 'Bot awakened'}), 200
+            except ProcessLookupError:
+                return jsonify({'status': 'warning', 'message': 'Bot process not found'}), 404
+        return jsonify({'status': 'warning', 'message': 'PID file not found'}), 404
+    except Exception as e:
+        logger.error(f"Error in wake endpoint: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 @app.route('/restart', methods=['POST'])
 def restart_bot():
     """Endpoint pour redémarrer le bot"""
