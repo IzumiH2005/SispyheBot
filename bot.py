@@ -10,7 +10,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters
 )
-from telegram.error import TelegramError
+from telegram.error import TelegramError, NetworkError, TimedOut
 from config import TELEGRAM_TOKEN
 from handlers import (
     start_command,
@@ -25,7 +25,7 @@ from handlers import (
 )
 from keep_alive import start_keep_alive
 
-# Configuration du logging
+# Configuration du logging améliorée
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -68,7 +68,7 @@ async def check_existing_instance():
             with open(pid_file, 'r') as f:
                 old_pid = int(f.read().strip())
             try:
-                os.kill(old_pid, 0)  # Vérifie si le processus existe
+                os.kill(old_pid, 0)
                 if old_pid != os.getpid():
                     logger.error(f"Une instance du bot est déjà en cours d'exécution (PID: {old_pid})")
                     return True
@@ -79,7 +79,6 @@ async def check_existing_instance():
             logger.error(f"Erreur lors de la lecture du fichier PID: {e}")
             os.remove(pid_file)
 
-    # Écriture du nouveau PID
     try:
         with open(pid_file, 'w') as f:
             f.write(str(os.getpid()))
@@ -90,69 +89,96 @@ async def check_existing_instance():
 
     return False
 
+async def handle_network_error(update: Update, context, error: Exception):
+    """Gère les erreurs réseau de manière appropriée"""
+    if isinstance(error, (NetworkError, TimedOut)):
+        logger.warning(f"Erreur réseau temporaire: {error}")
+        await asyncio.sleep(1)  # Attente courte avant de réessayer
+        return True
+    return False
+
 async def main():
-    """Fonction principale du bot"""
-    try:
-        # Vérification du token
-        if not TELEGRAM_TOKEN:
-            logger.error("Token Telegram manquant")
-            return
+    """Fonction principale du bot avec meilleure gestion des erreurs"""
+    restart_attempts = 0
+    max_restart_attempts = 3
 
-        # Vérification des instances multiples
-        if await check_existing_instance():
-            return
-
-        # Démarrage du keep-alive
-        start_keep_alive()
-        logger.info("Service keep-alive démarré")
-
-        # Configuration de l'application
-        application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-        setup_handlers(application)
-
-        logger.info("Démarrage du bot...")
-        await application.initialize()
-        await application.start()
-
-        # Démarrage du polling avec des options de configuration explicites
-        await application.updater.start_polling(
-            bootstrap_retries=-1,
-            drop_pending_updates=True,
-            allowed_updates=["message", "callback_query"],
-            read_timeout=30,
-            write_timeout=30
-        )
-
+    while restart_attempts < max_restart_attempts:
         try:
+            if not TELEGRAM_TOKEN:
+                logger.error("Token Telegram manquant")
+                return
+
+            if await check_existing_instance():
+                return
+
+            # Démarrage du keep-alive
+            start_keep_alive()
+            logger.info("Service keep-alive démarré")
+
+            # Configuration de l'application avec des timeouts plus longs
+            application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+            setup_handlers(application)
+
+            logger.info("Démarrage du bot...")
+            await application.initialize()
+            await application.start()
+
+            # Configuration du polling avec des paramètres optimisés
+            await application.updater.start_polling(
+                bootstrap_retries=-1,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query"],
+                read_timeout=60,  # Augmenté à 60 secondes
+                write_timeout=60,  # Augmenté à 60 secondes
+                pool_timeout=60,   # Nouveau timeout pour le pool
+                connect_timeout=60  # Nouveau timeout pour la connexion
+            )
+
+            # Boucle principale avec gestion des erreurs améliorée
             while True:
-                await asyncio.sleep(1)
+                try:
+                    await asyncio.sleep(1)
+                except Exception as e:
+                    if not await handle_network_error(None, None, e):
+                        raise
+
+        except TelegramError as e:
+            logger.error(f"Erreur Telegram: {e}")
+            restart_attempts += 1
+            if restart_attempts < max_restart_attempts:
+                logger.info(f"Tentative de redémarrage {restart_attempts}/{max_restart_attempts}")
+                await asyncio.sleep(5)  # Attente avant redémarrage
+                continue
+            break
+
         except Exception as e:
-            logger.error(f"Erreur pendant l'exécution: {e}")
+            logger.error(f"Erreur critique: {e}")
+            logger.exception("Détails de l'erreur:")
+            restart_attempts += 1
+            if restart_attempts < max_restart_attempts:
+                logger.info(f"Tentative de redémarrage {restart_attempts}/{max_restart_attempts}")
+                await asyncio.sleep(5)
+                continue
+            break
 
-    except TelegramError as e:
-        logger.error(f"Erreur Telegram: {e}")
-    except Exception as e:
-        logger.error(f"Erreur critique: {e}")
-        logger.exception("Détails de l'erreur:")
-    finally:
-        # Nettoyage
-        if 'application' in locals():
-            try:
-                await application.stop()
-                await application.shutdown()
-            except Exception as e:
-                logger.error(f"Erreur lors de l'arrêt de l'application: {e}")
+        finally:
+            if 'application' in locals():
+                try:
+                    await application.stop()
+                    await application.shutdown()
+                except Exception as e:
+                    logger.error(f"Erreur lors de l'arrêt de l'application: {e}")
 
-        pid_file = "/tmp/telegram_bot.pid"
-        if os.path.exists(pid_file):
-            try:
-                with open(pid_file, 'r') as f:
-                    pid = int(f.read().strip())
-                if pid == os.getpid():  # Ne supprimer que si c'est notre PID
-                    os.remove(pid_file)
-                    logger.info(f"Fichier PID {pid_file} supprimé")
-            except (ValueError, IOError) as e:
-                logger.error(f"Erreur lors de la suppression du fichier PID: {e}")
+            pid_file = "/tmp/telegram_bot.pid"
+            if os.path.exists(pid_file):
+                try:
+                    with open(pid_file, 'r') as f:
+                        pid = int(f.read().strip())
+                    if pid == os.getpid():
+                        os.remove(pid_file)
+                        logger.info(f"Fichier PID {pid_file} supprimé")
+                except (ValueError, IOError) as e:
+                    logger.error(f"Erreur lors de la suppression du fichier PID: {e}")
 
 if __name__ == '__main__':
     try:
