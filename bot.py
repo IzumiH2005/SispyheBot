@@ -115,7 +115,7 @@ async def main():
             start_keep_alive()
             logger.info("Service keep-alive démarré")
 
-            # Configuration de l'application avec des timeouts plus longs
+            # Configuration de l'application
             application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
             setup_handlers(application)
 
@@ -123,31 +123,33 @@ async def main():
             await application.initialize()
             await application.start()
 
-            # Configuration du polling avec des paramètres optimisés
+            # Configuration du polling sans timeout
             await application.updater.start_polling(
-                bootstrap_retries=-1,
+                bootstrap_retries=-1,  # Réessayer indéfiniment
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"],
-                read_timeout=60,  # Augmenté à 60 secondes
-                write_timeout=60,  # Augmenté à 60 secondes
-                pool_timeout=60,   # Nouveau timeout pour le pool
-                connect_timeout=60  # Nouveau timeout pour la connexion
+                read_timeout=None,  # Pas de timeout en lecture
+                write_timeout=None,  # Pas de timeout en écriture
+                connect_timeout=None,  # Pas de timeout en connexion
+                pool_timeout=None     # Pas de timeout pour le pool
             )
 
-            # Boucle principale avec gestion des erreurs améliorée
+            # Boucle principale sans timeout
             while True:
                 try:
                     await asyncio.sleep(1)
                 except Exception as e:
-                    if not await handle_network_error(None, None, e):
-                        raise
+                    if isinstance(e, (NetworkError, TimedOut)):
+                        logger.warning(f"Erreur réseau temporaire: {e}")
+                        continue
+                    raise
 
         except TelegramError as e:
             logger.error(f"Erreur Telegram: {e}")
             restart_attempts += 1
             if restart_attempts < max_restart_attempts:
                 logger.info(f"Tentative de redémarrage {restart_attempts}/{max_restart_attempts}")
-                await asyncio.sleep(5)  # Attente avant redémarrage
+                await asyncio.sleep(5)
                 continue
             break
 
