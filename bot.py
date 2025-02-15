@@ -22,9 +22,9 @@ except ImportError as e:
 from config import TELEGRAM_TOKEN
 
 # Configuration des intervalles via les variables d'environnement
-KEEP_ALIVE_INTERVAL = int(os.environ.get("KEEP_ALIVE_INTERVAL", "60"))  # Intervalle par défaut: 60 secondes
-MAX_RECONNECT_ATTEMPTS = int(os.environ.get("MAX_RECONNECT_ATTEMPTS", "5"))
-RECONNECT_DELAY = int(os.environ.get("RECONNECT_DELAY", "5"))  # Délai par défaut: 5 secondes
+KEEP_ALIVE_INTERVAL = int(os.environ.get("KEEP_ALIVE_INTERVAL", "30"))  # Intervalle par défaut: 30 secondes
+MAX_RECONNECT_ATTEMPTS = int(os.environ.get("MAX_RECONNECT_ATTEMPTS", "10"))  # Plus de tentatives
+RECONNECT_DELAY = int(os.environ.get("RECONNECT_DELAY", "10"))  # Délai par défaut: 10 secondes
 
 # Variables globales pour le monitoring
 last_activity = datetime.now()
@@ -76,6 +76,7 @@ def setup_handlers(application):
         handle_message
     ))
 
+
 async def keep_alive():
     """Fonction de keep-alive qui maintient le bot actif"""
     global last_activity
@@ -85,7 +86,7 @@ async def keep_alive():
             time_diff = (current_time - last_activity).total_seconds()
 
             if time_diff > KEEP_ALIVE_INTERVAL:
-                logger.info("Exécution du keep-alive...")
+                logger.info(f"Exécution du keep-alive... Dernière activité il y a {time_diff:.1f} secondes")
                 last_activity = current_time
 
             await asyncio.sleep(KEEP_ALIVE_INTERVAL)
@@ -93,16 +94,18 @@ async def keep_alive():
             logger.error(f"Erreur dans le keep-alive: {e}")
             await asyncio.sleep(5)
 
+
 async def start_polling(application):
     """Démarre le polling avec gestion des reconnexions"""
     attempt = 0
     while attempt < MAX_RECONNECT_ATTEMPTS:
         try:
+            logger.info(f"Tentative de connexion {attempt + 1}/{MAX_RECONNECT_ATTEMPTS}")
             await application.updater.start_polling(
                 bootstrap_retries=-1,
                 drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"],
-                read_timeout=60,  # Augmentation des timeouts
+                read_timeout=60,
                 write_timeout=60,
                 pool_timeout=60
             )
@@ -111,6 +114,8 @@ async def start_polling(application):
         except NetworkError as e:
             attempt += 1
             logger.error(f"Erreur réseau (tentative {attempt}/{MAX_RECONNECT_ATTEMPTS}): {e}")
+            if attempt < MAX_RECONNECT_ATTEMPTS:
+                logger.info(f"Nouvelle tentative dans {RECONNECT_DELAY} secondes...")
             await asyncio.sleep(RECONNECT_DELAY)
         except Exception as e:
             logger.error(f"Erreur inattendue lors du polling: {e}")
@@ -118,6 +123,7 @@ async def start_polling(application):
 
     logger.error("Nombre maximum de tentatives de reconnexion atteint")
     return False
+
 
 async def main():
     """Fonction principale du bot"""
@@ -205,6 +211,7 @@ async def main():
         if os.path.exists(pid_file):
             os.remove(pid_file)
             logger.info(f"Fichier PID {pid_file} supprimé")
+
 
 if __name__ == '__main__':
     try:
