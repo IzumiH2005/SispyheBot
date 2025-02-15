@@ -84,8 +84,8 @@ def ping_bot():
             except:
                 logger.error("Failed to trigger bot restart")
 
-        # Attend moins longtemps entre les vérifications
-        time.sleep(15)  # Vérifie toutes les 15 secondes au lieu de 30
+        # Vérifie plus fréquemment pour éviter la mise en veille
+        time.sleep(10)  # Vérifie toutes les 10 secondes
 
 def start_keep_alive():
     """Initialise le système keep-alive complet"""
