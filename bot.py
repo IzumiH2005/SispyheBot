@@ -125,13 +125,14 @@ async def main():
 
             # Configuration du polling avec des timeouts plus longs
             await application.updater.start_polling(
-                bootstrap_retries=-1,        # Réessayer indéfiniment
-                drop_pending_updates=True,   # Ignorer les mises à jour en attente au démarrage
+                bootstrap_retries=-1,
+                drop_pending_updates=True,
                 allowed_updates=["message", "callback_query"],
-                read_timeout=60,            # 60 secondes timeout en lecture
-                write_timeout=60,           # 60 secondes timeout en écriture
-                connect_timeout=60,         # 60 secondes timeout en connexion
-                pool_timeout=60             # 60 secondes timeout pour le pool
+                read_timeout=30,            # Réduit à 30 secondes
+                write_timeout=30,           # Réduit à 30 secondes
+                connect_timeout=15,         # Réduit à 15 secondes
+                pool_timeout=15,            # Réduit à 15 secondes
+                timeout=10                  # Timeout global de 10 secondes
             )
 
             # Boucle principale avec gestion améliorée des erreurs
@@ -149,9 +150,13 @@ async def main():
 
         except TelegramError as e:
             logger.error(f"Erreur Telegram: {e}")
-            restart_attempts += 1
-            logger.info(f"Tentative de redémarrage {restart_attempts}")
-            await asyncio.sleep(5)
+            if isinstance(e, TimedOut):
+                logger.info("Timeout détecté, redémarrage immédiat")
+                await asyncio.sleep(1)
+            else:
+                restart_attempts += 1
+                logger.info(f"Tentative de redémarrage {restart_attempts}")
+                await asyncio.sleep(5)
             continue
 
         except Exception as e:
