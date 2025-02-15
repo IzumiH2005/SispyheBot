@@ -61,7 +61,7 @@ def get_bot_metrics():
                 'create_time': datetime.fromtimestamp(process.create_time()).isoformat(),
                 'running_time': datetime.now().timestamp() - process.create_time()
             }
-            logger.info(f"Bot metrics collected successfully for PID {pid}")
+            logger.debug(f"Bot metrics collected successfully for PID {pid}")
             return metrics, "Bot process is healthy"
         except psutil.NoSuchProcess:
             logger.error(f"Process {pid} not found")
@@ -139,6 +139,28 @@ def root():
             '/health': 'Health check status'
         }
     })
+
+@app.route('/restart', methods=['POST'])
+def restart_bot():
+    """Endpoint pour redémarrer le bot"""
+    try:
+        pid_file = "/tmp/telegram_bot.pid"
+        if os.path.exists(pid_file):
+            with open(pid_file, 'r') as f:
+                pid = int(f.read().strip())
+            try:
+                os.kill(pid, signal.SIGTERM)
+                logger.info(f"Signal SIGTERM envoyé au processus {pid}")
+                return jsonify({'status': 'success', 'message': f'Bot process {pid} terminated'}), 200
+            except ProcessLookupError:
+                return jsonify({'status': 'warning', 'message': 'Bot process not found'}), 404
+            except Exception as e:
+                logger.error(f"Error restarting bot: {str(e)}")
+                return jsonify({'status': 'error', 'message': str(e)}), 500
+        return jsonify({'status': 'warning', 'message': 'PID file not found'}), 404
+    except Exception as e:
+        logger.error(f"Error in restart endpoint: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 def signal_handler(signum, frame):
     """Gestion gracieuse des signaux d'arrêt"""
