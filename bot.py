@@ -138,9 +138,10 @@ async def main():
             # Boucle principale avec gestion améliorée des erreurs
             while True:
                 try:
-                    await asyncio.sleep(10)  # Vérification toutes les 10 secondes
+                    await asyncio.sleep(5)  # Vérification plus fréquente
                     # Ping Telegram pour maintenir la connexion active
                     await application.bot.get_me()
+                    logger.info("Connection check successful")
                 except Exception as e:
                     if not isinstance(e, (NetworkError, TimedOut)):
                         raise

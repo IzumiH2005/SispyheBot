@@ -79,8 +79,11 @@ def ping_bot():
             is_bot_responding = False
             logger.error("Bot appears to be unresponsive")
             try:
-                # Essaie de redémarrer le bot via le health check
                 requests.post('http://127.0.0.1:5002/restart', timeout=5)
+                logger.info("Bot restart triggered")
+                time.sleep(2)  # Attendre le redémarrage
+                is_bot_responding = True
+                consecutive_failures = 0
             except:
                 logger.error("Failed to trigger bot restart")
 
