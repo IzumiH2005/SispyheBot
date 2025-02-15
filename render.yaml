@@ -3,7 +3,7 @@ services:
     name: sisyphe-bot
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python3 bot.py
+    startCommand: python3 health_check.py & python3 bot.py
     envVars:
       - key: TELEGRAM_TOKEN
         sync: false
