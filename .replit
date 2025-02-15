@@ -36,6 +36,7 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 bot.py"
+waitForPort = 8080
 
 [[workflows.workflow]]
 name = "Health Check"
@@ -50,7 +51,7 @@ task = "packager.installForAll"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "python3 health_check.py"
-waitForPort = 5001
+waitForPort = 5002
 
 [[ports]]
 localPort = 5000
@@ -59,6 +60,10 @@ externalPort = 80
 [[ports]]
 localPort = 5001
 externalPort = 3000
+
+[[ports]]
+localPort = 5002
+externalPort = 3001
 
 [[ports]]
 localPort = 8080
