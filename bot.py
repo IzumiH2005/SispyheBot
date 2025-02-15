@@ -97,15 +97,8 @@ async def handle_network_error(update: Update, context, error: Exception):
         return True
     return False
 
-def wake_handler(signum, frame):
-    """Gestionnaire pour le signal de réveil"""
-    logger.info("Signal de réveil reçu")
-    # Le gestionnaire de signal réveille automatiquement le processus
-
 async def main():
     """Fonction principale du bot avec meilleure gestion des erreurs"""
-    # Ajout du gestionnaire de signal de réveil
-    signal.signal(signal.SIGUSR1, wake_handler)
     restart_attempts = 0
     max_restart_attempts = float('inf')  # Nombre infini de tentatives de redémarrage
 
