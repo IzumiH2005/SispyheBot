@@ -2,34 +2,16 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime
-
-# Regroupement des imports telegram
-try:
-    from telegram import Update
-    from telegram.ext import (
-        ApplicationBuilder,
-        CommandHandler,
-        MessageHandler,
-        CallbackQueryHandler,
-        filters
-    )
-    from telegram.error import NetworkError, TelegramError
-except ImportError as e:
-    logging.error(f"Erreur d'importation des modules telegram: {e}")
-    sys.exit(1)
-
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters
+)
+from telegram.error import TelegramError
 from config import TELEGRAM_TOKEN
-
-# Configuration des intervalles via les variables d'environnement
-KEEP_ALIVE_INTERVAL = int(os.environ.get("KEEP_ALIVE_INTERVAL", "30"))
-MAX_RECONNECT_ATTEMPTS = int(os.environ.get("MAX_RECONNECT_ATTEMPTS", "10"))
-RECONNECT_DELAY = int(os.environ.get("RECONNECT_DELAY", "10"))
-PID_FILE = "/tmp/telegram_bot.pid"  # Définition constante du fichier PID
-
-# Variables globales pour le monitoring
-last_activity = datetime.now()
-
 from handlers import (
     start_command,
     help_command,
@@ -42,7 +24,7 @@ from handlers import (
     handle_callback
 )
 
-# Configuration du logging améliorée
+# Configuration du logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO,
@@ -53,96 +35,6 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
-
-def cleanup_pid_file():
-    """Nettoie le fichier PID si il existe"""
-    try:
-        if os.path.exists(PID_FILE):
-            os.remove(PID_FILE)
-            logger.info(f"Fichier PID {PID_FILE} supprimé avec succès")
-    except Exception as e:
-        logger.error(f"Erreur lors de la suppression du fichier PID: {e}")
-
-def write_pid_file():
-    """Écrit le PID dans le fichier avec gestion d'erreurs"""
-    try:
-        with open(PID_FILE, 'w') as f:
-            current_pid = os.getpid()
-            f.write(str(current_pid))
-            logger.info(f"PID {current_pid} écrit dans {PID_FILE}")
-        return True
-    except Exception as e:
-        logger.error(f"Erreur lors de l'écriture du PID: {e}")
-        return False
-
-def check_existing_process():
-    """Vérifie si une instance du bot est déjà en cours d'exécution"""
-    try:
-        if os.path.exists(PID_FILE):
-            with open(PID_FILE, 'r') as f:
-                old_pid = int(f.read().strip())
-            try:
-                os.kill(old_pid, 0)
-                logger.error(f"Instance du bot déjà en cours d'exécution (PID: {old_pid})")
-                return True
-            except OSError:
-                logger.info(f"Ancien processus (PID: {old_pid}) terminé, suppression du fichier PID")
-                cleanup_pid_file()
-        return False
-    except Exception as e:
-        logger.error(f"Erreur lors de la vérification du processus existant: {e}")
-        return False
-
-async def keep_alive():
-    """Fonction de keep-alive améliorée avec gestion des erreurs"""
-    global last_activity
-    logger.info("Démarrage de la tâche keep-alive")
-    while True:
-        try:
-            current_time = datetime.now()
-            time_diff = (current_time - last_activity).total_seconds()
-
-            if time_diff > KEEP_ALIVE_INTERVAL:
-                logger.info(f"Keep-alive actif - Dernière activité il y a {time_diff:.1f} secondes")
-                last_activity = current_time
-
-                # Vérification du fichier PID
-                if not os.path.exists(PID_FILE):
-                    logger.warning("Fichier PID non trouvé, réécriture...")
-                    write_pid_file()
-
-            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
-        except Exception as e:
-            logger.error(f"Erreur dans le keep-alive: {e}")
-            await asyncio.sleep(5)
-
-async def start_polling(application):
-    """Démarre le polling avec gestion des reconnexions"""
-    attempt = 0
-    while attempt < MAX_RECONNECT_ATTEMPTS:
-        try:
-            logger.info(f"Tentative de connexion {attempt + 1}/{MAX_RECONNECT_ATTEMPTS}")
-            await application.updater.start_polling(
-                bootstrap_retries=-1,
-                drop_pending_updates=True,
-                allowed_updates=["message", "callback_query"],
-                read_timeout=60,
-                write_timeout=60,
-                pool_timeout=60
-            )
-            logger.info("Polling démarré avec succès")
-            return True
-        except NetworkError as e:
-            attempt += 1
-            logger.error(f"Erreur réseau (tentative {attempt}/{MAX_RECONNECT_ATTEMPTS}): {e}")
-            if attempt < MAX_RECONNECT_ATTEMPTS:
-                logger.info(f"Nouvelle tentative dans {RECONNECT_DELAY} secondes...")
-            await asyncio.sleep(RECONNECT_DELAY)
-        except Exception as e:
-            logger.error(f"Erreur inattendue lors du polling: {e}")
-            raise
-    logger.error("Nombre maximum de tentatives de reconnexion atteint")
-    return False
 
 def setup_handlers(application):
     """Configure les handlers de l'application"""
@@ -166,11 +58,10 @@ def setup_handlers(application):
         handle_message
     ))
 
-
 async def main():
-    """Fonction principale du bot avec gestion améliorée des erreurs"""
+    """Fonction principale du bot"""
+    pid_file = "/tmp/telegram_bot.pid"
     application = None
-    keep_alive_task = None
 
     try:
         # Vérification du token
@@ -178,66 +69,53 @@ async def main():
             logger.error("Token Telegram manquant")
             return
 
-        # Nettoyage initial du fichier PID
-        cleanup_pid_file()
+        # Vérification du PID
+        if os.path.exists(pid_file):
+            with open(pid_file, 'r') as f:
+                old_pid = int(f.read())
+            try:
+                os.kill(old_pid, 0)
+                logger.error("Une instance du bot est déjà en cours d'exécution")
+                return
+            except OSError:
+                logger.info("Ancien processus terminé")
 
-        # Vérification du processus existant
-        if check_existing_process():
-            return
+        # Écriture du PID
+        with open(pid_file, 'w') as f:
+            f.write(str(os.getpid()))
+            logger.info(f"PID {os.getpid()} écrit dans {pid_file}")
 
-        # Écriture du nouveau PID
-        if not write_pid_file():
-            logger.error("Impossible d'écrire le fichier PID")
-            return
-
-        # Configuration et démarrage de l'application
+        # Configuration de l'application
         application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
         setup_handlers(application)
 
-        logger.info("Initialisation du bot...")
+        logger.info("Démarrage du bot...")
         await application.initialize()
         await application.start()
 
-        # Démarrage du keep-alive
-        keep_alive_task = asyncio.create_task(keep_alive())
-        logger.info("Tâche keep-alive démarrée")
+        # Démarrage du polling avec des options de configuration explicites
+        await application.updater.start_polling(
+            bootstrap_retries=-1,
+            drop_pending_updates=True,
+            allowed_updates=["message", "callback_query"],
+            read_timeout=30,
+            write_timeout=30
+        )
 
-        # Démarrage du polling
-        if not await start_polling(application):
-            logger.error("Impossible de démarrer le polling")
-            return
+        # Attendre indéfiniment
+        try:
+            while True:
+                await asyncio.sleep(1)  # Pause d'une seconde pour éviter une utilisation excessive du CPU
+        except Exception as e:
+            logger.error(f"Erreur pendant l'exécution: {e}")
 
-        logger.info("Bot démarré avec succès")
-
-        # Boucle principale
-        while True:
-            try:
-                await asyncio.sleep(1)
-                last_activity = datetime.now()
-            except asyncio.CancelledError:
-                logger.info("Arrêt demandé du bot")
-                break
-            except Exception as e:
-                logger.error(f"Erreur dans la boucle principale: {e}")
-                if isinstance(e, NetworkError):
-                    if not await start_polling(application):
-                        break
-                else:
-                    break
-
+    except TelegramError as e:
+        logger.error(f"Erreur Telegram: {e}")
     except Exception as e:
-        logger.error(f"Erreur critique dans main(): {e}")
+        logger.error(f"Erreur critique: {e}")
         logger.exception("Détails de l'erreur:")
-
     finally:
         # Nettoyage
-        if keep_alive_task:
-            keep_alive_task.cancel()
-            try:
-                await keep_alive_task
-            except asyncio.CancelledError:
-                pass
-
         if application:
             try:
                 await application.stop()
@@ -245,12 +123,19 @@ async def main():
             except Exception as e:
                 logger.error(f"Erreur lors de l'arrêt de l'application: {e}")
 
-        cleanup_pid_file()
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+            logger.info(f"Fichier PID {pid_file} supprimé")
 
 if __name__ == '__main__':
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        # Obtenir la boucle d'événements existante ou en créer une nouvelle
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # Exécuter la fonction principale
         loop.run_until_complete(main())
     except KeyboardInterrupt:
         logger.info("Arrêt du bot par l'utilisateur")
@@ -258,6 +143,8 @@ if __name__ == '__main__':
         logger.error(f"Erreur au niveau principal: {e}")
         logger.exception("Détails de l'erreur:")
     finally:
-        if 'loop' in locals() and not loop.is_closed():
+        # Fermeture propre de la boucle
+        try:
             loop.close()
-        cleanup_pid_file()
+        except Exception as e:
+            logger.error(f"Erreur lors de la fermeture de la boucle: {e}")
